@@ -94,3 +94,15 @@ def test_espn_settings_conversion():
     assert out["scoring"]["rules"]["pass_td"] == 6.0
     assert out["scoring"]["te_rec_bonus"] == pytest.approx(0.5)
     assert out["unmapped"]["stats"] == [{"stat_id": 999, "points": 2.0}]
+
+
+def test_espn_split_long_field_goals_and_return_tds():
+    # Real-league shape: 50-59 (198) and 60+ (201) instead of 50+ (74).
+    items = [{"statId": 201, "points": 6.0}, {"statId": 198, "points": 5.0},
+             {"statId": 102, "points": 6.0}, {"statId": 101, "points": 6.0}]
+    out = convert_settings({"size": 9, "scoringSettings": {"scoringItems": items}})
+    assert out["scoring"]["rules"]["fg_50p"] == 5.0  # 50-59 wins over 60+
+    assert out["scoring"]["rules"]["st_td"] == 6.0
+    assert out["unmapped"]["stats"] == []
+    only_60 = convert_settings({"scoringSettings": {"scoringItems": [{"statId": 201, "points": 6.0}]}})
+    assert only_60["scoring"]["rules"]["fg_50p"] == 6.0

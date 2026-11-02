@@ -99,7 +99,15 @@ export default function Advisor() {
                 <CallBadge call={r.call} />
                 <InjuryBadge status={r.injury_status} />
                 {ownerOf.has(r.id) && (
-                  <span className="small muted">{myIds.has(r.id) ? "On your roster" : `Owned by ${ownerOf.get(r.id)}`}</span>
+                  <span className="small muted">
+                    {!myIds.has(r.id)
+                      ? `Owned by ${ownerOf.get(r.id)}`
+                      : r.call === "BUY LOW"
+                        ? "On your roster: keep, worth more than their recent points suggest"
+                        : r.call === "SELL HIGH"
+                          ? "On your roster: shop now while the price is high"
+                          : "On your roster"}
+                  </span>
                 )}
               </div>
               <ul>

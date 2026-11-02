@@ -24,6 +24,9 @@ from .values import LineupEvaluator
 
 BUY, SELL, HOLD = "BUY LOW", "SELL HIGH", "HOLD"
 EDGE_THRESHOLD = 0.12
+# Trade finder: largest rest-of-season lineup loss we'd still propose to a partner
+# (only when the deal also looks fair to them by recent points).
+MAX_PARTNER_LOSS = 8.0
 # Only grade fantasy-relevant players: top N at each position by projection or perception.
 RELEVANT = {"QB": 24, "RB": 48, "WR": 60, "TE": 20}
 
@@ -129,9 +132,11 @@ def find_trades(my_roster: list[str], other_rosters: dict[str, list[str]],
                 max_results: int = 25) -> list[dict]:
     """Search 1-for-1, 2-for-1 and 1-for-2 trades that improve my lineup.
 
-    A trade is kept when it adds to my projected starting lineup. It is ranked
-    by my gain, plus credit when the partner also gains (win-win) and when the
-    partner would *see* it as fair (perceived values), since those get accepted.
+    A trade is kept when it adds to my projected starting lineup AND has a
+    realistic chance of being accepted: the partner's lineup barely gets
+    worse (or improves), or the deal looks fair by the recent points they
+    judge players on. Ranking rewards my gain, the partner's gain (win-win
+    trades get accepted) and perceived fairness.
     """
     def val(pid):
         return float(values["value"].get(pid, 0.0))
@@ -164,7 +169,10 @@ def find_trades(my_roster: list[str], other_rosters: dict[str, list[str]],
             p_give = side_value([pval(p) for p in give])
             p_get = side_value([pval(p) for p in get])
             looks_fair = p_give >= 0.9 * p_get
-            score_ = my_gain + 0.5 * min(their_gain, 10) + (5 if looks_fair else 0)
+            # Drop trades the partner would obviously reject.
+            if their_gain < -MAX_PARTNER_LOSS or (their_gain < 0 and not looks_fair):
+                continue
+            score_ = my_gain + 0.75 * min(their_gain, 20) + (6 if looks_fair else 0)
             results.append({
                 "team_id": team_id, "give": list(give), "get": list(get),
                 "my_gain": round(my_gain, 1), "their_gain": round(their_gain, 1),

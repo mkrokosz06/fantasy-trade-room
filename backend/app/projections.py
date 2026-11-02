@@ -75,6 +75,13 @@ def build_baseline(store: DataStore, half_life: float):
     pos_now = store.players["position"]
     h["position"] = h["id"].map(pos_now).fillna(h["position"])
     h["w"] = _weights(h, store.season, half_life)
+    # Games a player left early (injury, ejection) say nothing about their
+    # role, so they get no weight. "Partial" = under 35% of the player's
+    # typical opportunities, for players who normally get real volume.
+    opps = h["pass_att"] + h["rush_att"] + h["rec_tgt"]
+    typical = opps.groupby(h["id"]).transform("median")
+    h["partial"] = (typical >= 6) & (opps < 0.35 * typical)
+    h.loc[h["partial"], "w"] = 0.0
 
     wsum = h[STATS].multiply(h["w"], axis=0)
     wsum["W"] = h["w"]

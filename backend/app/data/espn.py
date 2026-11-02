@@ -31,7 +31,13 @@ STAT_IDS = {
     72: "fum_lost",
     74: "fg_50p", 77: "fg_40_49", 80: "fg_0_39", 85: "fg_miss",
     86: "xp_made", 88: "xp_miss",
+    198: "fg_50p",   # made FG 50-59 (newer ESPN leagues split 50+)
+    101: "st_td",    # kickoff return TD
 }
+# Used only when the primary id above didn't set the stat. We project one
+# 50+ FG bucket and one return-TD bucket, so 60+ FGs and punt return TDs
+# borrow the 50-59 / kickoff values unless those are absent.
+FALLBACK_IDS = {201: "fg_50p", 102: "st_td"}
 # Distance-specific misses all collapse into our single fg_miss stat.
 MISS_IDS = {76: "fg_miss", 79: "fg_miss", 82: "fg_miss"}
 
@@ -121,11 +127,15 @@ def convert_settings(settings: dict) -> dict:
     te_bonus = 0.0
     unmapped_stats = []
     miss_vals = []
+    fallbacks: list[tuple[str, float]] = []
     for it in items:
         sid = int(it.get("statId"))
         pts = float(it.get("points", 0) or 0)
         if sid in MISS_IDS:
             miss_vals.append(pts)
+            continue
+        if sid in FALLBACK_IDS:
+            fallbacks.append((FALLBACK_IDS[sid], pts))
             continue
         key = STAT_IDS.get(sid)
         if key is None:
@@ -136,6 +146,9 @@ def convert_settings(settings: dict) -> dict:
         overrides = it.get("pointsOverrides") or {}
         if key == "rec" and "6" in overrides:  # slot 6 = TE -> TE premium
             te_bonus = float(overrides["6"]) - pts
+    for key, pts in fallbacks:
+        if not rules.get(key):
+            rules[key] = pts
     if miss_vals and not rules.get("fg_miss"):
         rules["fg_miss"] = sum(miss_vals) / len(miss_vals)
 
