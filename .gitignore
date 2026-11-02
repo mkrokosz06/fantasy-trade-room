@@ -1,0 +1,21 @@
+# Secrets: ESPN login cookies live here
+.env
+
+# Local data: downloaded caches and your personal settings
+/data/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
