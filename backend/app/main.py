@@ -50,7 +50,8 @@ class Ctx:
         if engine == "ml":
             end_week = int(self.settings["projection"].get("end_week", 17))
             preds, meta = ml_service.predictions(self.store, end_week)
-            model = (preds, float(meta["backtest"]["blend_sleeper_weight"]))
+            bt = meta["backtest"]
+            model = (preds, bt.get("blend_by_pos") or float(bt["blend_sleeper_weight"]))
             model_key = meta["trained_at"]
             self.model_meta = meta
         self.proj = get_projections(self.store, self.settings, model, model_key)
@@ -279,8 +280,10 @@ def ml_status():
 
 
 @app.post("/api/ml/train")
-def ml_train():
-    started = ml_service.start_training()
+def ml_train(kind: str = "train"):
+    if kind not in ("train", "experiments"):
+        raise HTTPException(400, "kind must be 'train' or 'experiments'")
+    started = ml_service.start_training(kind)
     return {"started": started, "status": ml_service.status()}
 
 

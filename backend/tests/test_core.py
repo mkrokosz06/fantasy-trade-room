@@ -108,6 +108,25 @@ def test_rolling_features_never_see_the_current_game():
     assert out[5] == pytest.approx(5.0)               # player b never sees player a
 
 
+def test_experiment_keep_rule():
+    from app.ml.model import improves
+
+    old = {"all": {"mae": 5.20, "rank_corr": 0.480}}
+    assert improves({"all": {"mae": 5.18, "rank_corr": 0.480}}, old)       # less error, same ranking
+    assert improves({"all": {"mae": 5.20, "rank_corr": 0.485}}, old)       # better ranking, same error
+    assert not improves({"all": {"mae": 5.199, "rank_corr": 0.481}}, old)  # noise-sized change
+    assert not improves({"all": {"mae": 5.18, "rank_corr": 0.470}}, old)   # trades ranking for error
+
+
+def test_model_config_round_trip():
+    from app.ml.model import Config
+
+    c = Config(name="x", groups=["base", "sleeper"], params={"num_leaves": 15}, rounds=700, season_decay=0.85)
+    back = Config.from_dict({**c.to_dict(), "unknown_key": 1})
+    assert back == c
+    assert "sl_pts_ppr" in back.features and "ppr_e3" in back.features
+
+
 def test_espn_split_long_field_goals_and_return_tds():
     # Real-league shape: 50-59 (198) and 60+ (201) instead of 50+ (74).
     items = [{"statId": 201, "points": 6.0}, {"statId": 198, "points": 5.0},

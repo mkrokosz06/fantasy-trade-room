@@ -183,8 +183,38 @@ export interface MetricRow {
   rank_corr: number;
   n: number;
 }
+export interface Experiment {
+  name: string;
+  label: string;
+  description: string;
+  retrain_every: number | null;
+  kept?: boolean | null;
+  games: number;
+  metrics: Record<string, MetricRow>;
+}
+export interface Experiments {
+  ran_at: string;
+  seasons: number[];
+  tune_season: number;
+  rule: string;
+  experiments: Experiment[];
+  tuning: { name: string; rounds: number; metrics_2023: MetricRow }[];
+  retrain_gain: { mae: number; rank_corr: number };
+  chosen_label: string;
+  seconds: number;
+  final?: { original: MetricRow; chosen_model: MetricRow; blend: MetricRow; sleeper: MetricRow };
+}
+export interface InjuryRow {
+  status: string;
+  practice: string;
+  n: number;
+  played: number;
+  multiplier: number;
+}
 export interface MlStatus {
   status: "idle" | "training" | "ready" | "error";
+  kind?: "train" | "experiments";
+  experiments: Experiments | null;
   trained: boolean;
   log: string[];
   started_at: string | null;
@@ -197,10 +227,13 @@ export interface MlStatus {
     training_games: number;
     n_features: number;
     seconds: number;
+    injury?: { base_ratio: number; by_status: Record<string, number>; rows: InjuryRow[] };
     backtest: {
       seasons: number[];
       games: number;
       blend_sleeper_weight: number;
+      blend_by_pos?: Record<string, number>;
+      ensemble_alpha?: number;
       range_coverage: number;
       range_coverage_raw?: number;
       range_scale?: number;

@@ -33,6 +33,8 @@ def status() -> dict:
                 f["label"] = label_feature(f["feature"])
     s["trained"] = meta is not None
     s["meta"] = meta
+    from . import experiments
+    s["experiments"] = experiments.load()
     if s["status"] == "idle" and meta:
         s["status"] = "ready"
     return s
@@ -43,16 +45,22 @@ def _log(msg: str):
         _state["log"].append(msg)
 
 
-def start_training() -> bool:
+def start_training(kind: str = "train") -> bool:
+    """kind="train": retrain with the chosen settings (5-8 min).
+    kind="experiments": re-run every accuracy experiment, then retrain (about 40 min)."""
     with _lock:
         if _state["status"] == "training":
             return False
-        _state.update(status="training", log=[], started_at=datetime.now(timezone.utc).isoformat(),
+        _state.update(status="training", kind=kind, log=[], started_at=datetime.now(timezone.utc).isoformat(),
                       finished_at=None, error=None)
 
     def run():
         try:
-            model.train_and_save(get_store(), log=_log)
+            if kind == "experiments":
+                from . import experiments
+                experiments.run(get_store(), log=_log)
+            else:
+                model.train_and_save(get_store(), log=_log)
             _pred_cache.clear()
             with _lock:
                 _state["status"] = "ready"
@@ -76,6 +84,5 @@ def predictions(store: DataStore, end_week: int) -> tuple[pd.DataFrame, dict]:
     key = (store.loaded_at, meta["trained_at"], end_week)
     if key not in _pred_cache:
         _pred_cache.clear()
-        scale = float(meta["backtest"].get("range_scale", 1.0))
-        _pred_cache[key] = model.predict_future(store, end_week, scale)
+        _pred_cache[key] = model.predict_future(store, end_week)
     return _pred_cache[key], meta

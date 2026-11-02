@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, invalidateAll, useApi, type MetricRow, type MlStatus } from "../api";
+import { api, invalidateAll, useApi, type Experiments, type InjuryRow, type MetricRow, type MlStatus } from "../api";
 import { ErrorBox, Loading } from "../components/bits";
 
 const SCOPES = ["all", "QB", "RB", "WR", "TE"] as const;
@@ -28,10 +28,10 @@ export default function ModelLab() {
     }
   }, [training, wasTraining]);
 
-  const train = async () => {
+  const train = async (kind: "train" | "experiments" = "train") => {
     setErr(null);
     try {
-      await api("/api/ml/train", { method: "POST" });
+      await api(`/api/ml/train?kind=${kind}`, { method: "POST" });
       reload();
     } catch (e) {
       setErr((e as Error).message);
@@ -56,9 +56,19 @@ export default function ModelLab() {
             it; the main tools keep the original engine, so you can compare the two side by side.
           </p>
         </div>
-        <button className="btn" onClick={train} disabled={training}>
-          {training ? "Training…" : meta ? "Retrain model" : "Train model"}
-        </button>
+        <div className="row">
+          <button
+            className="btn ghost"
+            onClick={() => train("experiments")}
+            disabled={training}
+            title="Tests every accuracy idea against past seasons, keeps what helps, then retrains. About 70 minutes."
+          >
+            Re-run experiments
+          </button>
+          <button className="btn" onClick={() => train("train")} disabled={training}>
+            {training ? (st.data.kind === "experiments" ? "Running experiments…" : "Training…") : meta ? "Retrain model" : "Train model"}
+          </button>
+        </div>
       </div>
       <ErrorBox error={err || st.data.error} />
 
@@ -134,6 +144,10 @@ export default function ModelLab() {
         </section>
       )}
 
+      {st.data.experiments && <ExperimentsSection ex={st.data.experiments} />}
+
+      {meta?.injury?.rows && <InjurySection rows={meta.injury.rows} />}
+
       {bt && (
         <div className="grid2">
           <section className="panel stack">
@@ -163,6 +177,16 @@ export default function ModelLab() {
         </div>
       )}
 
+      {meta?.backtest.blend_by_pos && (
+        <p className="small muted">
+          How much each position leans on Sleeper in the blend:{" "}
+          {Object.entries(meta.backtest.blend_by_pos)
+            .map(([p, w]) => `${p} ${Math.round(w * 100)}%`)
+            .join(", ")}
+          . Picked by the backtest; the rest comes from the model.
+        </p>
+      )}
+
       {meta && (
         <section className="stack">
           <h2>What the model pays attention to</h2>
@@ -185,5 +209,134 @@ export default function ModelLab() {
         </section>
       )}
     </div>
+  );
+}
+
+function delta(v: number, d = 3, invert = false) {
+  if (Math.abs(v) < 10 ** -d / 2) return <span className="muted">±0</span>;
+  const good = invert ? v < 0 : v > 0;
+  return (
+    <span className={`delta ${good ? "up" : "down"}`}>
+      {v > 0 ? "+" : ""}
+      {v.toFixed(d)}
+    </span>
+  );
+}
+
+function ExperimentsSection({ ex }: { ex: Experiments }) {
+  const base = ex.experiments[0]?.metrics.all;
+  return (
+    <section className="stack">
+      <h2>What we tried to make it more accurate</h2>
+      <p className="muted">
+        Each idea was tested on the same {ex.seasons.join(" and ")} games, trained only on earlier data. {ex.rule}{" "}
+        Model settings were tuned on {ex.tune_season}, so the final test seasons stayed untouched.
+      </p>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Idea</th>
+              <th className="n">Average miss</th>
+              <th className="n" title="Change vs the original model. Negative is better.">vs original</th>
+              <th className="n">Ranking accuracy</th>
+              <th className="n" title="Change vs the original model. Positive is better.">vs original</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ex.experiments.map((e) => {
+              const m = e.metrics.all;
+              return (
+                <tr key={e.name}>
+                  <td style={{ whiteSpace: "normal", minWidth: 260 }}>
+                    <b>{e.label}</b>
+                    <div className="small muted">{e.description}</div>
+                  </td>
+                  <td className="n">{m.mae.toFixed(3)}</td>
+                  <td className="n">{base ? delta(m.mae - base.mae, 3, true) : "–"}</td>
+                  <td className="n">{m.rank_corr.toFixed(3)}</td>
+                  <td className="n">{base ? delta(m.rank_corr - base.rank_corr, 3) : "–"}</td>
+                  <td>
+                    {e.kept === null || e.kept === undefined ? (
+                      <span className="badge hold">{e.retrain_every ? "Measured" : "Baseline"}</span>
+                    ) : e.kept ? (
+                      <span className="badge buy">Kept</span>
+                    ) : (
+                      <span className="badge sell">Didn't help</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="small muted">
+        Final model uses: {ex.chosen_label}. Retraining during the season (as the app does weekly) changed average miss by{" "}
+        {(-ex.retrain_gain.mae).toFixed(3)} and ranking by {ex.retrain_gain.rank_corr >= 0 ? "+" : ""}
+        {ex.retrain_gain.rank_corr.toFixed(3)}, so real-world accuracy should be at least what's shown here.
+      </p>
+      <details className="panel">
+        <summary>Settings tried on {ex.tune_season}</summary>
+        <table style={{ marginTop: 8 }}>
+          <thead>
+            <tr><th>Settings</th><th className="n">Average miss</th><th className="n">Ranking accuracy</th></tr>
+          </thead>
+          <tbody>
+            {ex.tuning.map((t) => (
+              <tr key={t.name}>
+                <td>{t.name}</td>
+                <td className="n">{t.metrics_2023.mae.toFixed(3)}</td>
+                <td className="n">{t.metrics_2023.rank_corr.toFixed(3)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </section>
+  );
+}
+
+const PRACTICE_LABEL: Record<string, string> = {
+  DNP: "Missed practice", Limited: "Limited practice", Full: "Full practice", None: "No practice report",
+};
+
+function InjurySection({ rows }: { rows: InjuryRow[] }) {
+  const shown = rows.filter((r) => r.n >= 25 && r.status !== "Out");
+  return (
+    <section className="stack">
+      <h2>How injury designations really play out</h2>
+      <p className="muted">
+        Learned from every injury report since 2016: how much of a player's usual output they actually produced,
+        counting games they sat out or left early. Model lab uses these for each player's next game, based on this
+        week's official report when it's out (Wednesday to Friday), or Sleeper's status before that.
+      </p>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Game status</th>
+              <th>Practice that week</th>
+              <th className="n">Times seen</th>
+              <th className="n">Played</th>
+              <th className="n" title="Share of the player's usual fantasy output">Expected output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((r) => (
+              <tr key={`${r.status}-${r.practice}`}>
+                <td>{r.status === "None" ? "No game status (listed on report)" : r.status}</td>
+                <td>{PRACTICE_LABEL[r.practice] ?? r.practice}</td>
+                <td className="n">{r.n.toLocaleString()}</td>
+                <td className="n">{Math.round(r.played * 100)}%</td>
+                <td className="n"><b>{Math.round(r.multiplier * 100)}%</b></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="small muted">Players listed Out essentially never play, so they're projected at zero for that game.</p>
+    </section>
   );
 }

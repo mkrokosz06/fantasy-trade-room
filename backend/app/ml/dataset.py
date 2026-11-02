@@ -41,7 +41,7 @@ SPANS = (3, 10)
 OUT_ALL_GAMES = {"IR", "PUP", "NFI", "Sus"}
 OUT_NEXT_GAME = {"Out", "Doubtful"} | OUT_ALL_GAMES
 
-FEATURES = (
+BASE_FEATURES = (
     [f"{c}_e{s}" for s in SPANS for c in ROLL_SRC]
     + ["games_prior", "season_games_prior", "ppr_last", "prev_season_ppg",
        "team_pass_att_e", "team_rush_att_e", "team_xfp_e", "team_ppr_e",
@@ -49,6 +49,30 @@ FEATURES = (
        "age", "years_exp", "draft_pick", "own_status", "vacated_tgt", "vacated_car",
        "week", "pos_code"]
 )
+# Optional feature groups, each tested separately in the experiments.
+FEATURE_GROUPS: dict[str, list[str]] = {
+    "base": BASE_FEATURES,
+    "sleeper": ["sl_pts_ppr", "sl_rec_tgt", "sl_rush_att", "sl_pass_att", "sl_rec_yd",
+                "sl_rush_yd", "sl_pass_yd", "sl_td"],
+    "depth": ["depth_rank"],
+    "qb": ["qb_quality", "qb_change", "is_starter_qb"],
+    "defense": ["opp_exp_allowed", "opp_fpoe"],
+    "weather": ["wind", "temp"],
+}
+GROUP_LABELS = {"base": "Original 71 inputs", "sleeper": "Sleeper's projection as an input",
+                "depth": "Depth chart rank", "qb": "Starting QB situation",
+                "defense": "Opponent defense, adjusted for opportunity", "weather": "Wind and temperature"}
+
+
+def features_for(groups) -> list[str]:
+    out: list[str] = []
+    for g in groups:
+        out += [f for f in FEATURE_GROUPS[g] if f not in out]
+    return out
+
+
+# Back-compat: the original feature list.
+FEATURES = BASE_FEATURES
 
 FEATURE_LABELS = {
     "ppr": "fantasy points", "xfp_ep": "expected fantasy points (play-by-play)",
@@ -69,6 +93,14 @@ FEATURE_LABELS = {
     "xrush_td": "expected rushing TDs", "xrec_td": "expected receiving TDs",
     "xpass_yd": "expected passing yards", "xrush_yd": "expected rushing yards",
     "xrec_yd": "expected receiving yards",
+    "sl_pts_ppr": "Sleeper's projected points", "sl_rec_tgt": "Sleeper's projected targets",
+    "sl_rush_att": "Sleeper's projected carries", "sl_pass_att": "Sleeper's projected pass attempts",
+    "sl_rec_yd": "Sleeper's projected receiving yards", "sl_rush_yd": "Sleeper's projected rushing yards",
+    "sl_pass_yd": "Sleeper's projected passing yards", "sl_td": "Sleeper's projected TDs",
+    "depth_rank": "depth chart rank", "qb_quality": "starting QB quality",
+    "qb_change": "new starting QB", "is_starter_qb": "is the starting QB",
+    "opp_exp_allowed": "opportunity the defense allows", "opp_fpoe": "defense points allowed over expected",
+    "wind": "wind speed", "temp": "temperature",
 }
 
 
@@ -132,14 +164,15 @@ def load_history(current_season: int, log=print) -> pd.DataFrame:
             inj = sources.injury_reports(s, current_season)
             inj = inj[inj["game_type"] == "REG"].dropna(subset=["gsis_id", "week"])
             inj = pd.DataFrame({"id": inj["gsis_id"], "week": inj["week"].astype(int),
-                                "report_status": inj["report_status"]})
+                                "report_status": inj["report_status"],
+                                "practice_status": inj["practice_status"]})
             f = f.merge(inj.drop_duplicates(["id", "week"]), on=["id", "week"], how="left")
         except Exception as e:  # noqa: BLE001
             log(f"  {s}: no injury reports ({e.__class__.__name__})")
         frames.append(f)
         log(f"  loaded {s}: {len(f):,} player-games")
     hist = pd.concat(frames, ignore_index=True)
-    for c in [*EP_COLS.values(), *EP_TEAM.values(), "snap_pct", "report_status"]:
+    for c in [*EP_COLS.values(), *EP_TEAM.values(), "snap_pct", "report_status", "practice_status"]:
         if c not in hist.columns:
             hist[c] = np.nan
     hist["season"] = hist["season"].astype(int)
@@ -153,11 +186,22 @@ def _team_games(sched: pd.DataFrame) -> pd.DataFrame:
     g["total_line"] = pd.to_numeric(g["total_line"], errors="coerce")
     g["spread_line"] = pd.to_numeric(g["spread_line"], errors="coerce")
     g["dome"] = g["roof"].isin(["dome", "closed"]).astype(float)
-    common = ["game_id", "season", "week", "gameday", "total_line", "dome"]
+    # Weather only matters outdoors; indoors is calm and ~70F.
+    g["wind"] = pd.to_numeric(g["wind"], errors="coerce").where(g["dome"] == 0, 0.0)
+    g["temp"] = pd.to_numeric(g["temp"], errors="coerce").where(g["dome"] == 0, 70.0)
+    common = ["game_id", "season", "week", "gameday", "total_line", "dome", "wind", "temp"]
     home = g[common].assign(team=g["home_team"], opp=g["away_team"], is_home=1.0,
                             spread_team=g["spread_line"], rest=g["home_rest"])
     away = g[common].assign(team=g["away_team"], opp=g["home_team"], is_home=0.0,
                             spread_team=-g["spread_line"], rest=g["away_rest"])
+    # Weather is only known about a week ahead: fill unknown outdoor games with
+    # that stadium's historical average for the month.
+    g["month"] = pd.to_datetime(g["gameday"], errors="coerce").dt.month
+    for c in ("wind", "temp"):
+        clim = g.groupby(["home_team", "month"])[c].transform("mean")
+        g[c] = g[c].fillna(clim).fillna(g.groupby("month")[c].transform("mean"))
+    home = home.assign(wind=g["wind"], temp=g["temp"])
+    away = away.assign(wind=g["wind"], temp=g["temp"])
     tg = pd.concat([home, away], ignore_index=True)
     tg["implied"] = tg["total_line"] / 2 + tg["spread_team"] / 2
     tg["season"] = tg["season"].astype(int)
@@ -174,6 +218,12 @@ def _future_rows(store: DataStore, end_week: int) -> pd.DataFrame:
     games = store.games[(~store.games["played"]) & (store.games["week"] <= end_week)]
     pl = store.players[store.players["position"].isin(POS) & store.players["team"].notna()]
     pl = pl[~pl["id"].str.startswith("sl:")]
+    # Sleeper keeps stale teams on some retired players. Only project players who
+    # played this season or last, plus rookies and second-year players.
+    last = store.weekly.groupby("id")["season"].max()
+    recent = pl["id"].map(last) >= store.season - 1
+    young = pd.to_numeric(pl["years_exp"], errors="coerce").fillna(0) <= 1
+    pl = pl[recent | young]
     rows = pl[["id", "name", "position", "team"]].reset_index(drop=True).merge(
         games[["team", "opp", "week", "game_id"]], on="team", how="inner")
     rows["season"] = store.season
@@ -181,7 +231,7 @@ def _future_rows(store: DataStore, end_week: int) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------- features
-def build(store: DataStore, hist: pd.DataFrame, end_week: int = 18) -> pd.DataFrame:
+def build(store: DataStore, hist: pd.DataFrame, end_week: int = 18, log=print) -> pd.DataFrame:
     season_now = store.season
     fut = _future_rows(store, end_week)
     fut["is_future"] = True
@@ -249,7 +299,7 @@ def build(store: DataStore, hist: pd.DataFrame, end_week: int = 18) -> pd.DataFr
     # ---- game context from schedules
     tg = _team_games(sources.schedules())
     df = df.merge(tg[["team", "season", "week", "gameday", "is_home", "implied", "spread_team",
-                      "total_line", "dome", "rest"]], on=["team", "season", "week"], how="left")
+                      "total_line", "dome", "rest", "wind", "temp"]], on=["team", "season", "week"], how="left")
 
     # ---- player bio
     bio = sources.nflverse_players()[["gsis_id", "birth_date", "draft_pick", "rookie_season"]]
@@ -269,8 +319,150 @@ def build(store: DataStore, hist: pd.DataFrame, end_week: int = 18) -> pd.DataFr
         df.loc[first_future, "own_status"] = df.loc[first_future, "id"].map(sl).map(status_code).fillna(0.0)
 
     df = _vacated(df, store)
+    df = _sleeper_features(df, store, log)
+    df = _depth(df, store, log)
+    df = _qb_situation(df, store)
+    df = _defense_quality(df)
     df = df.sort_values(["id", "t"]).reset_index(drop=True)
     return df
+
+
+# ---------------------------------------------------------------- extra feature groups
+def _sleeper_features(df: pd.DataFrame, store: DataStore, log) -> pd.DataFrame:
+    """Sleeper's own pre-game projection for that player-week (2018+)."""
+    cw = sources.id_crosswalk()[["sleeper_id", "gsis_id"]].dropna().drop_duplicates("sleeper_id")
+    sl_map = dict(zip(cw["sleeper_id"], cw["gsis_id"]))
+    sl_map.update(store.players.dropna(subset=["sleeper_id"]).set_index("sleeper_id")["id"].to_dict())
+    frames = []
+    weeks = df[df["season"] >= 2018][["season", "week", "is_future"]].drop_duplicates(["season", "week"])
+    for season, week, fut in weeks.itertuples(index=False):
+        upcoming = bool(fut) or (season == store.season and week >= store.current_week)
+        try:
+            f = sources.sleeper_projections_hist(int(season), int(week), upcoming=upcoming)
+        except Exception:  # noqa: BLE001 - one missing week shouldn't stop training
+            continue
+        if len(f):
+            frames.append(f)
+    if not frames:
+        for c in FEATURE_GROUPS["sleeper"]:
+            df[c] = np.nan
+        return df
+    sl = pd.concat(frames, ignore_index=True)
+    sl["id"] = sl["sleeper_id"].map(sl_map)
+    sl = sl.dropna(subset=["id"]).drop_duplicates(["id", "season", "week"])
+    sl["sl_td"] = sl["sl_rec_td"] + sl["sl_rush_td"] + sl["sl_pass_td"]
+    log(f"  Sleeper projections: {len(sl):,} player-weeks")
+    return df.merge(sl[["id", "season", "week", *FEATURE_GROUPS["sleeper"]]],
+                    on=["id", "season", "week"], how="left")
+
+
+def _depth(df: pd.DataFrame, store: DataStore, log) -> pd.DataFrame:
+    """Depth chart rank at the player's position, as published before the game.
+
+    Through 2024 nflverse publishes one chart per week; from 2025 it's daily
+    snapshots, so each game uses the last snapshot taken before game day.
+    """
+    out = []
+    for s in sorted(df["season"].unique()):
+        try:
+            dc = sources.depth_charts(int(s), store.season)
+        except Exception:  # noqa: BLE001
+            continue
+        if "dt" not in dc.columns:  # weekly format
+            dc = dc[(dc["game_type"] == "REG") & dc["depth_position"].isin(POS)].dropna(subset=["gsis_id", "week"])
+            r = dc.assign(rank=pd.to_numeric(dc["depth_team"], errors="coerce"),
+                          week=dc["week"].astype(int))
+            r = r.groupby(["gsis_id", "week"], as_index=False)["rank"].min()
+            r["season"] = int(s)
+            out.append(r.rename(columns={"gsis_id": "id", "rank": "depth_rank"}))
+        else:  # daily snapshots
+            dc = dc[dc["pos_abb"].isin(POS)].dropna(subset=["gsis_id"])
+            dc = dc.assign(snap=pd.to_datetime(dc["dt"], utc=True).dt.tz_localize(None),
+                           rank=pd.to_numeric(dc["pos_rank"], errors="coerce"))
+            per = dc.groupby(["team", "snap", "gsis_id"], as_index=False)["rank"].min()
+            games = df[df["season"] == s][["team", "week", "gameday", "is_future"]].drop_duplicates(["team", "week"])
+            games = games.assign(gd=pd.to_datetime(games["gameday"], errors="coerce"))
+            snaps = per[["team", "snap"]].drop_duplicates().sort_values("snap")
+            # last snapshot strictly before game day (future games: the latest one)
+            games = games.sort_values("gd")
+            games["gd"] = games["gd"].fillna(snaps["snap"].max() + pd.Timedelta(days=1))
+            m = pd.merge_asof(games.sort_values("gd"), snaps.rename(columns={"snap": "snap_m"}).sort_values("snap_m"),
+                              left_on="gd", right_on="snap_m", by="team", allow_exact_matches=False)
+            m = m.dropna(subset=["snap_m"])
+            r = m.merge(per, left_on=["team", "snap_m"], right_on=["team", "snap"], how="inner")
+            r = r.groupby(["gsis_id", "week"], as_index=False)["rank"].min()
+            r["season"] = int(s)
+            out.append(r.rename(columns={"gsis_id": "id", "rank": "depth_rank"}))
+    if not out:
+        df["depth_rank"] = np.nan
+        return df
+    d = pd.concat(out, ignore_index=True).drop_duplicates(["id", "season", "week"])
+    log(f"  Depth charts: {len(d):,} player-weeks")
+    df = df.merge(d, on=["id", "season", "week"], how="left").sort_values(["id", "t"]).reset_index(drop=True)
+    # Depth charts demote injured players. For an injured player's games after
+    # the next one, use the rank they held when they last played instead.
+    fut = df["is_future"]
+    later = fut & (df.groupby("id")["is_future"].cumsum() > 1)
+    injured = df["id"].map(store.players["injury_status"]).isin(OUT_NEXT_GAME)
+    last_played = df["depth_rank"].where(~fut).groupby(df["id"]).ffill()
+    fix = later & injured & last_played.notna()
+    df.loc[fix, "depth_rank"] = last_played[fix]
+    return df
+
+
+def _qb_situation(df: pd.DataFrame, store: DataStore) -> pd.DataFrame:
+    """Who's starting at QB, how good they are, and whether it's a new starter."""
+    qbs = df[df["position"] == "QB"]
+    hist = qbs[~qbs["is_future"]].sort_values("pass_att", ascending=False)
+    start_h = hist.drop_duplicates(["team", "season", "week"])[["team", "season", "week", "id", "ppr_e10"]]
+    # Future: depth-chart QB1 who isn't ruled out, else the QB with the most recent volume.
+    fut = qbs[qbs["is_future"]].copy()
+    if len(fut):
+        # "Out"/"Doubtful" only rule a QB out of the team's next game; IR etc. rule out all.
+        status = fut["id"].map(store.players["injury_status"])
+        first_week = fut.groupby("team")["week"].transform("min")
+        out_status = status.isin(OUT_ALL_GAMES) | ((fut["week"] == first_week) & status.isin(OUT_NEXT_GAME))
+        fut = fut.assign(_out=out_status.astype(int), _dr=fut["depth_rank"].fillna(9),
+                         _vol=fut["pass_att_e3"].fillna(0))
+        fut = fut.sort_values(["_out", "_dr", "_vol"], ascending=[True, True, False])
+        start_f = fut.drop_duplicates(["team", "season", "week"])[["team", "season", "week", "id", "ppr_e10"]]
+        starters = pd.concat([start_h, start_f], ignore_index=True)
+    else:
+        starters = start_h
+    starters = starters.rename(columns={"id": "qb_id", "ppr_e10": "qb_quality"})
+    starters = starters.sort_values(["team", "season", "week"])
+    prev = starters.groupby("team")["qb_id"].shift(1)
+    starters["qb_change"] = (prev.notna() & (prev != starters["qb_id"])).astype(float)
+    df = df.merge(starters, on=["team", "season", "week"], how="left")
+    df["is_starter_qb"] = ((df["position"] == "QB") & (df["id"] == df["qb_id"])).astype(float)
+    return df.drop(columns=["qb_id"])
+
+
+def _defense_quality(df: pd.DataFrame) -> pd.DataFrame:
+    """Opponent defense measured against opportunity, not raw points allowed:
+    how much expected production it allows, and how much it gives up beyond that."""
+    h = df[~df["is_future"] & df["xfp_ep"].notna()]
+    g = h.groupby(["opp", "season", "week", "position"], as_index=False).agg(
+        exp=("xfp_ep", "sum"), act=("ppr", "sum"))
+    g["fpoe"] = g["act"] - g["exp"]
+    wide = g.pivot_table(index=["opp", "season", "week"], columns="position", values=["exp", "fpoe"]).reset_index()
+    wide.columns = ["_".join(c).strip("_") for c in wide.columns.to_flat_index()]
+    fut = df[df["is_future"]][["opp", "season", "week"]].drop_duplicates()
+    wide = pd.concat([wide, fut], ignore_index=True).sort_values(["opp", "season", "week"]).reset_index(drop=True)
+    cols = [c for c in wide.columns if c.startswith(("exp_", "fpoe_"))]
+    rolled = _ewm_prior(wide, "opp", cols, 10)
+    for c in cols:
+        wide[c] = rolled[c].to_numpy()
+    df = df.merge(wide, on=["opp", "season", "week"], how="left")
+    df["opp_exp_allowed"] = np.nan
+    df["opp_fpoe"] = np.nan
+    for p in POS:
+        m = df["position"] == p
+        if f"exp_{p}" in df.columns:
+            avg = wide[f"exp_{p}"].mean()
+            df.loc[m, "opp_exp_allowed"] = df.loc[m, f"exp_{p}"] / avg
+            df.loc[m, "opp_fpoe"] = df.loc[m, f"fpoe_{p}"]
+    return df.drop(columns=cols)
 
 
 def _vacated(df: pd.DataFrame, store: DataStore) -> pd.DataFrame:

@@ -30,11 +30,20 @@ model** instead of the original engine, so you can compare the two side by side.
 counts, injury reports, schedules and Vegas lines, plus [ffopportunity](https://github.com/ffverse/ffopportunity)
 expected points, a play-by-play model that captures field position and red-zone usage.
 
-**71 inputs per prediction**, all computed from games *before* kickoff, so there's no leakage (a test checks this):
-recent and longer-term usage (targets, carries, snap share, target share, WOPR, air yards), production and
-expected production, team volume and offense strength, Vegas implied total, spread and game total, opponent points
-allowed to the position, targets and carries freed up by injured teammates, own injury status, age, experience,
-draft pick and home/dome/rest.
+**83 inputs per prediction**, all computed from games *before* kickoff, so there's no leakage (a test checks this):
+- recent and longer-term usage (targets, carries, snap share, target share, WOPR, air yards)
+- production and expected production
+- team volume and offense strength
+- Vegas implied total, spread and game total
+- opponent points allowed to the position
+- targets and carries freed up by injured teammates
+- own injury status, age, experience, draft pick, and home/dome/rest
+- Sleeper's own projection for that week (2018+)
+- depth chart rank
+- the starting QB's quality, and whether he's new
+
+For injured starters, the depth chart rank is the one from before the injury, so returning starters aren't treated as
+backups.
 
 **Models (LightGBM),** one set each for QBs, RBs, and WR/TE:
 - a model for each stat (attempts, targets, carries, yards, TDs, ...), so any scoring system works;
@@ -48,10 +57,33 @@ information. 2025 is tested the same way. Results on 7,665 fantasy-relevant play
 | --- | --- | --- |
 | Sleeper projections | 5.23 | 0.482 |
 | Original engine (v1 core) | 5.32 | 0.443 |
-| Model (stats, scored PPR) | 5.21 | 0.476 |
-| **Model + Sleeper blend (55/45)** | **5.15** | **0.496** |
+| First model (71 inputs) | 5.21 | 0.476 |
+| **Current model alone** | **5.15** | **0.501** |
+| **Current model + Sleeper blend** (used in Model lab) | **5.12** | **0.503** |
 
-The Model lab uses the blend, with the weight chosen by the backtest.
+The Sleeper blend weight is set separately for each position by the backtest: QB 0%, RB 60%, WR 85%, TE 15%. The
+model beats Sleeper at QB and TE, while Sleeper still helps at WR.
+
+**Experiments** (`backend/app/ml/experiments.py`, also on the Model lab page). Each idea was tested against the same
+backtest and kept only if it helped:
+
+| Idea | Result |
+| --- | --- |
+| Sleeper's projection as an input | Kept (−0.027 miss, +0.009 ranking) |
+| Starting QB situation | Kept (−0.025, +0.011) |
+| Depth chart rank | Kept, barely (−0.005) |
+| Opponent defense adjusted for opportunity | Didn't help |
+| Wind and temperature | Didn't help |
+| Weighting recent seasons more | Didn't help |
+| Tuned settings (picked on 2023 so the test stayed clean) | Kept (+0.004 ranking) |
+| Retraining every 4 weeks in-season | −0.010 miss, +0.002 ranking (the app retrains weekly) |
+
+**Injuries, learned from every report since 2016** (replaces hand-set guesses in Model lab). Questionable players
+produce 62% of their usual output on average (42% if they missed practice all week, 78% after a full practice).
+Doubtful players almost never play.
+
+To re-run the experiments, click **Re-run experiments** in Model lab (about 70 minutes), or run
+`..\.venv\Scripts\python -m app.ml.experiments` from `backend/`.
 
 ## Running it
 

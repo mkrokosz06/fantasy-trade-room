@@ -82,19 +82,42 @@ def expected_points(season: int, current_season: int) -> pd.DataFrame:
                            base=FFOPP)
 
 
-def sleeper_projections_ppr(season: int, week: int) -> pd.DataFrame:
-    """Historical Sleeper PPR projections, used only to benchmark the model."""
+SLEEPER_FEATURE_STATS = ["pts_ppr", "rec_tgt", "rush_att", "pass_att", "rec_yd", "rush_yd",
+                         "pass_yd", "rec_td", "rush_td", "pass_td"]
+
+
+def sleeper_projections_hist(season: int, week: int, upcoming: bool = False,
+                             force: bool = False) -> pd.DataFrame:
+    """Sleeper's weekly projections (a few key stats) for QB/RB/WR/TE.
+
+    Used to benchmark the model and as model inputs. Past weeks never change so
+    they're cached forever; upcoming weeks refresh every 6 hours.
+    """
     rows = []
     for pos in ("QB", "RB", "WR", "TE"):
-        data = cached_json(f"{SLEEPER}/projections/nfl/{season}/{week}",
-                           f"hist_sleeper_proj_{season}_w{week}_{pos}.json", ttl_hours=math.inf,
+        name = f"{'' if upcoming else 'hist_'}sleeper_proj_{season}_w{week}_{pos}.json"
+        data = cached_json(f"{SLEEPER}/projections/nfl/{season}/{week}", name,
+                           ttl_hours=6 if upcoming else math.inf, force=force,
                            params=[("season_type", "regular"), ("position[]", pos)])
         for r in data or []:
             st = r.get("stats") or {}
-            if st.get("pts_ppr") is not None:
-                rows.append({"sleeper_id": str(r.get("player_id")), "season": season, "week": week,
-                             "sleeper_ppr": float(st["pts_ppr"])})
+            if st.get("pts_ppr") is None:
+                continue
+            rows.append({"sleeper_id": str(r.get("player_id")), "season": season, "week": week,
+                         **{f"sl_{k}": float(st.get(k) or 0.0) for k in SLEEPER_FEATURE_STATS}})
     return pd.DataFrame(rows)
+
+
+def sleeper_projections_ppr(season: int, week: int) -> pd.DataFrame:
+    """Historical Sleeper PPR projections, used to benchmark the model."""
+    df = sleeper_projections_hist(season, week)
+    if df.empty:
+        return pd.DataFrame(columns=["sleeper_id", "season", "week", "sleeper_ppr"])
+    return df.rename(columns={"sl_pts_ppr": "sleeper_ppr"})[["sleeper_id", "season", "week", "sleeper_ppr"]]
+
+
+def depth_charts(season: int, current_season: int) -> pd.DataFrame:
+    return _season_parquet("depth_charts", f"depth_charts_{season}.parquet", season, current_season)
 
 
 # ---------------------------------------------------------------- Sleeper

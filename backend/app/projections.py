@@ -156,7 +156,8 @@ def _sleeper_frame(store: DataStore, weeks: list[int]) -> pd.DataFrame:
     return canon.dropna(subset=["id"]).drop_duplicates(["id", "week"])
 
 
-def compute(store: DataStore, settings: dict, model: tuple[pd.DataFrame, float] | None = None) -> Projections:
+def compute(store: DataStore, settings: dict,
+            model: tuple[pd.DataFrame, float | dict] | None = None) -> Projections:
     """Build projections. With `model` = (per-game ML predictions, Sleeper blend
     weight learned in the backtest), the ML stat predictions replace the usage
     model for QB/RB/WR/TE and floor/ceiling ranges are attached."""
@@ -194,8 +195,12 @@ def compute(store: DataStore, settings: dict, model: tuple[pd.DataFrame, float] 
 
     mp = None
     if model is not None:
-        preds, blend = model
+        preds, blend = model  # blend: one weight, or {position: weight}
         mp = rows[["id", "week"]].merge(preds, on=["id", "week"], how="left").set_axis(rows.index)
+        if "avail_ml" in mp.columns:
+            # Learned from past injury reports (status + practice participation).
+            learned = mp["avail_ml"].notna()
+            rows.loc[learned, "avail"] = mp.loc[learned, "avail_ml"].astype(float)
         has_m = mp["ppr_model"].notna()
         ours.loc[has_m] = ours.loc[has_m].fillna(0.0)
         for s in STATS:
@@ -214,7 +219,12 @@ def compute(store: DataStore, settings: dict, model: tuple[pd.DataFrame, float] 
     conf = (base["W"].reindex(rows["id"]).fillna(0).values / 3.0).clip(0, 1)
     # The ML model handles thin samples itself (draft pick, age, team context),
     # so it uses the backtested blend weight as-is.
-    b = blend if mp is not None else blend + (1 - blend) * (1 - conf)
+    if mp is not None and isinstance(blend, dict):
+        b = rows["position"].map(blend).fillna(float(np.mean(list(blend.values())))).to_numpy()
+    elif mp is not None:
+        b = blend
+    else:
+        b = blend + (1 - blend) * (1 - conf)
     b = pd.Series(np.where(~have_ours, 1.0, np.where(~have_sl, 0.0, b)), index=rows.index)
     final = ours.fillna(0.0).multiply(1 - b, axis=0) + slm.multiply(b, axis=0)
     final = final.multiply(rows["avail"], axis=0)
