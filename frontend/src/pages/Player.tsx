@@ -1,14 +1,17 @@
 import { useParams } from "react-router-dom";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { fmt, pct, useApi, type Call, type Meta } from "../api";
-import { CallBadge, ErrorBox, InjuryBadge, Loading } from "../components/bits";
+import { fmt, pct, useApi, type Call, type Meta, type MlStatus } from "../api";
+import { CallBadge, ErrorBox, InjuryBadge, Loading, Range } from "../components/bits";
+import { useEngine } from "../engine";
+
+const GROUP: Record<string, string> = { QB: "QB", RB: "RB", WR: "REC", TE: "REC" };
 
 interface Detail {
   info: { id: string; name: string; position: string; team: string | null; age: number | null; injury_status: string | null; injury_body_part: string | null; headshot: string | null };
-  value?: { value: number; vorp: number; ros_pts: number; proj_ppg: number; pos_rank: number; overall_rank: number; replacement: number; games_left: number };
+  value?: { value: number; vorp: number; ros_pts: number; proj_ppg: number; pos_rank: number; overall_rank: number; replacement: number; games_left: number; floor_ppg?: number; ceiling_ppg?: number };
   game_log: Record<string, number | string | null>[];
   seasons: Record<string, number | string | null>[];
-  projection: { week: number; opp: string; is_home: boolean; gameday: string; matchup: number; vegas: number; avail: number; sleeper_weight: number; pts: number; pass_yd: number; pass_td: number; rush_att: number; rush_yd: number; rush_td: number; rec_tgt: number; rec: number; rec_yd: number; rec_td: number }[];
+  projection: { week: number; opp: string; is_home: boolean; gameday: string; matchup: number; vegas: number; avail: number; sleeper_weight: number; pts: number; floor?: number; ceiling?: number; pass_yd: number; pass_td: number; rush_att: number; rush_yd: number; rush_td: number; rec_tgt: number; rec: number; rec_yd: number; rec_td: number }[];
   model?: { weighted_games: number; per_game: Record<string, number>; efficiency: { stat: string; per: string; player: number; position_avg: number | null }[] };
   signal?: { call: Call; reasons: string[]; edge: number; confidence: number };
 }
@@ -20,8 +23,10 @@ const EFF_LABEL: Record<string, string> = {
 
 export default function Player() {
   const { id = "" } = useParams();
+  const { ep, isModel } = useEngine();
   const meta = useApi<Meta>("/api/meta");
-  const d = useApi<Detail>(`/api/players/${encodeURIComponent(id)}`);
+  const d = useApi<Detail>(ep(`/api/players/${encodeURIComponent(id)}`));
+  const ml = useApi<MlStatus>(isModel ? "/api/ml/status" : null);
   if (d.error) return <ErrorBox error={d.error} />;
   if (!d.data) return <Loading what="Loading player" />;
   const { info, value, signal, model } = d.data;
@@ -56,6 +61,11 @@ export default function Player() {
             <div className="stat"><b>{fmt(value.value, 0)}</b><span>Value</span></div>
             <div className="stat"><b>{fmt(value.ros_pts, 0)}</b><span>ROS points</span></div>
             <div className="stat"><b>{fmt(value.proj_ppg)}</b><span>Proj PPG</span></div>
+            {value.floor_ppg !== undefined && (
+              <div className="stat" title="In a typical week, 80% of games land in this range">
+                <b><Range floor={value.floor_ppg} ceiling={value.ceiling_ppg} /></b><span>Weekly range</span>
+              </div>
+            )}
             <div className="stat"><b>{pos}{value.pos_rank}</b><span>Position rank</span></div>
           </div>
         )}
@@ -102,6 +112,7 @@ export default function Player() {
                   <tr>
                     <th>Wk</th><th>Opp</th><th className="n" title="Opponent factor: above 1 means the defense allows more points to this position">Matchup</th>
                     <th className="n" title="Chance of playing, from injury status">Plays</th><th className="n">Pts</th>
+                    {isModel && <th className="n" title="80% of the time the result lands in this range">Range</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -112,6 +123,7 @@ export default function Player() {
                       <td className="n" style={{ color: p.matchup > 1.04 ? "var(--good)" : p.matchup < 0.96 ? "var(--bad)" : undefined }}>{fmt(p.matchup, 2)}</td>
                       <td className="n">{pct(p.avail)}</td>
                       <td className="n"><b>{fmt(p.pts)}</b></td>
+                      {isModel && <td className="n muted"><Range floor={p.floor} ceiling={p.ceiling} /></td>}
                     </tr>
                   ))}
                 </tbody>
@@ -122,7 +134,23 @@ export default function Player() {
           )}
         </section>
 
-        {model && pos !== "K" && (
+        {isModel && ml.data?.meta && GROUP[pos] && (
+          <section className="panel">
+            <h2>What drives the model for {pos === "WR" || pos === "TE" ? "pass catchers" : `${pos}s`}</h2>
+            <p className="small muted">Share of the model's predictive power, from the PPR points model.</p>
+            <div className="bars">
+              {ml.data.meta.importance[GROUP[pos]].slice(0, 8).map((f) => (
+                <div key={f.feature} className="bar-row">
+                  <span>{f.label}</span>
+                  <i style={{ width: `${Math.min(100, (f.share / ml.data!.meta!.importance[GROUP[pos]][0].share) * 100)}%` }} />
+                  <span className="num small muted">{(f.share * 100).toFixed(0)}%</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {!isModel && model && pos !== "K" && (
           <section className="panel">
             <h2>How the projection is built</h2>
             <p className="small muted">

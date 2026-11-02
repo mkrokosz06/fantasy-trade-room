@@ -242,6 +242,15 @@ td a:hover { text-decoration: underline; }
 /* ---------------------------------------------------------------- matchups */
 .heat td.h { text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; }
 
+/* ---------------------------------------------------------------- model lab */
+.range { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bars { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.bar-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 3ch; gap: 10px; align-items: center; font-size: 0.9rem; }
+.bar-row i { display: block; height: 8px; border-radius: 4px; background: var(--turf-soft); }
+.side .group { margin: 14px 10px 4px; font-size: 0.8rem; opacity: 0.65; }
+.best { color: var(--good); font-weight: 700; }
+.log { font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem; background: var(--chalk); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; max-height: 260px; overflow-y: auto; white-space: pre-wrap; }
+
 /* ---------------------------------------------------------------- player */
 .player-hero { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
 .player-hero img { width: 84px; height: 84px; border-radius: 50%; object-fit: cover; background: var(--hold-bg); }

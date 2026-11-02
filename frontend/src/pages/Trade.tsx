@@ -4,6 +4,7 @@ import { api, fmt, useApi, type Call, type League, type RankedPlayer, type Setti
 import { CallBadge, ErrorBox, Headshot } from "../components/bits";
 import { PlayerSearch, type SearchItem } from "../components/PlayerSearch";
 import { YardField } from "../components/YardField";
+import { useEngine } from "../engine";
 
 interface TradePlayer {
   id: string;
@@ -29,10 +30,11 @@ interface TradeResult {
 
 export default function Trade() {
   const [params, setParams] = useSearchParams();
-  const ranked = useApi<RankedPlayer[]>("/api/rankings?limit=800");
+  const { ep, isModel } = useEngine();
+  const ranked = useApi<RankedPlayer[]>(ep("/api/rankings?limit=800"));
   const settings = useApi<Settings>("/api/settings");
   const hasLeague = !!settings.data?.espn.league_id;
-  const league = useApi<League>(hasLeague ? "/api/league" : null);
+  const league = useApi<League>(hasLeague ? ep("/api/league") : null);
 
   const split = (k: string) => (params.get(k) || "").split(",").filter(Boolean);
   const [a, setA] = useState<string[]>(() => split("a"));
@@ -80,7 +82,7 @@ export default function Trade() {
     }
     let cancelled = false;
     setError(null);
-    api<TradeResult>("/api/trade", {
+    api<TradeResult>(ep("/api/trade"), {
       method: "POST",
       body: JSON.stringify({
         side_a: a,
@@ -94,7 +96,8 @@ export default function Trade() {
     return () => {
       cancelled = true;
     };
-  }, [a, b, teamA, teamB, setParams]);
+    // `ep` is rebuilt every render; isModel captures the only thing it depends on.
+  }, [a, b, teamA, teamB, setParams, isModel]);
 
   const teamName = (id: string, fallback: string) =>
     league.data?.teams.find((t) => t.team_id === id)?.name || fallback;
@@ -171,8 +174,11 @@ export default function Trade() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>Trade calculator</h1>
+          <h1>{isModel ? "Trade calculator, model edition" : "Trade calculator"}</h1>
           <p>
+            {isModel
+              ? "Same calculator, but every value comes from the trained model blended with Sleeper. "
+              : ""}
             Values are rest-of-season points above a replacement-level player in your league format. Pick
             ESPN teams to also see how each starting lineup changes.
           </p>

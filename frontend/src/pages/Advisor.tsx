@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, fmt, useApi, type Advice, type Call, type League, type Settings } from "../api";
-import { CallBadge, ErrorBox, Headshot, InjuryBadge, Loading, PosFilter } from "../components/bits";
+import { CallBadge, ErrorBox, Headshot, InjuryBadge, Loading, PosFilter, Range } from "../components/bits";
+import { useEngine } from "../engine";
 
 const TABS: { call: Call; label: string; blurb: string }[] = [
   { call: "BUY LOW", label: "Buy low", blurb: "Projected to score more than managers are seeing. Trade for them now." },
@@ -23,10 +24,11 @@ export default function Advisor() {
   const [tab, setTab] = useState<Call>("BUY LOW");
   const [pos, setPos] = useState("ALL");
   const [scope, setScope] = useState<"all" | "mine" | "others">("all");
-  const advice = useApi<Advice[]>("/api/advice");
+  const { ep, base, isModel } = useEngine();
+  const advice = useApi<Advice[]>(ep("/api/advice"));
   const settings = useApi<Settings>("/api/settings");
   const hasLeague = !!settings.data?.espn.league_id;
-  const league = useApi<League>(hasLeague ? "/api/league" : null);
+  const league = useApi<League>(hasLeague ? ep("/api/league") : null);
   const myTeam = league.data?.teams.find((t) => t.team_id === league.data?.my_team_id);
   const myIds = useMemo(() => new Set(myTeam?.roster.map((p) => p.id).filter(Boolean) as string[]), [myTeam]);
   const ownerOf = useMemo(() => {
@@ -53,10 +55,10 @@ export default function Advisor() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>Trade advisor</h1>
+          <h1>{isModel ? "Trade advisor, model edition" : "Trade advisor"}</h1>
           <p>
-            Trade partners judge players by recent points. These calls compare that against what usage, efficiency
-            and the remaining schedule project from here.
+            Trade partners judge players by recent points. These calls compare that against what{" "}
+            {isModel ? "the trained model" : "usage, efficiency and the remaining schedule"} project from here.
           </p>
         </div>
       </div>
@@ -90,7 +92,7 @@ export default function Advisor() {
             <Headshot src={r.headshot} />
             <div>
               <div className="row" style={{ gap: 8 }}>
-                <Link to={`/player/${encodeURIComponent(r.id)}`}>
+                <Link to={`${base}/player/${encodeURIComponent(r.id)}`}>
                   <b>{r.name}</b>
                 </Link>
                 <span className="pos">
@@ -125,6 +127,12 @@ export default function Advisor() {
                 <b>{fmt(r.proj_ppg)}</b>
                 <span>Projected</span>
               </div>
+              {r.floor_ppg !== undefined && (
+                <div className="stat">
+                  <b><Range floor={r.floor_ppg} ceiling={r.ceiling_ppg} /></b>
+                  <span>Range</span>
+                </div>
+              )}
               <div className="stat" style={{ color: tab === "BUY LOW" ? "var(--buy)" : tab === "SELL HIGH" ? "var(--sell)" : "var(--hold)" }}>
                 <b>{Math.round(r.confidence * 100)}</b>
                 <span>Confidence</span>
@@ -139,6 +147,7 @@ export default function Advisor() {
 }
 
 function TradeIdeas({ teamName }: { teamName: string }) {
+  const { ep, base } = useEngine();
   const [ideas, setIdeas] = useState<TradeIdea[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,7 +156,7 @@ function TradeIdeas({ teamName }: { teamName: string }) {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<{ trades: TradeIdea[] }>("/api/league/trades");
+      const r = await api<{ trades: TradeIdea[] }>(ep("/api/league/trades"));
       setIdeas(r.trades);
     } catch (e) {
       setError((e as Error).message);
@@ -209,7 +218,7 @@ function TradeIdeas({ teamName }: { teamName: string }) {
                   <td>
                     <Link
                       className="btn ghost small"
-                      to={`/?a=${t.give.map((p) => p.id).join(",")}&b=${t.get.map((p) => p.id).join(",")}&tb=${t.team_id}`}
+                      to={`${base ? `${base}/trade` : "/"}?a=${t.give.map((p) => p.id).join(",")}&b=${t.get.map((p) => p.id).join(",")}&tb=${t.team_id}`}
                     >
                       Open in calculator
                     </Link>

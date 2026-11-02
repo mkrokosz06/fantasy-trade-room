@@ -15,6 +15,44 @@ projects every player for each remaining week, and connects to your ESPN league.
 | **ESPN league** | Rosters, standings by projected lineup strength, and a one-click import of your league's scoring and lineup slots. |
 | **Settings** | Scoring presets (PPR is the default; Half-PPR, Standard, 6-pt pass TD and TE premium are also available), league size and lineup slots (1QB, 3WR, Superflex, 2QB), and projection controls. |
 
+### Model lab
+
+A separate section that runs the same trade calculator, advisor and rankings on a **trained machine-learning
+model** instead of the original engine, so you can compare the two side by side.
+
+- **Overview** trains or retrains the model. Retrain weekly after games finish; it takes 5 to 8 minutes. The page also
+  shows the backtest scoreboard and what the model pays attention to.
+- Every projection gets a **floor and ceiling**: 8 weeks out of 10, the player lands between them.
+
+## The trained model (`backend/app/ml/`)
+
+**Data:** every regular-season QB/RB/WR/TE game since 2016 (about 57,000 games). Sources are nflverse stats, snap
+counts, injury reports, schedules and Vegas lines, plus [ffopportunity](https://github.com/ffverse/ffopportunity)
+expected points, a play-by-play model that captures field position and red-zone usage.
+
+**71 inputs per prediction**, all computed from games *before* kickoff, so there's no leakage (a test checks this):
+recent and longer-term usage (targets, carries, snap share, target share, WOPR, air yards), production and
+expected production, team volume and offense strength, Vegas implied total, spread and game total, opponent points
+allowed to the position, targets and carries freed up by injured teammates, own injury status, age, experience,
+draft pick and home/dome/rest.
+
+**Models (LightGBM),** one set each for QBs, RBs, and WR/TE:
+- a model for each stat (attempts, targets, carries, yards, TDs, ...), so any scoring system works;
+- a direct PPR points model;
+- 10th and 90th percentile models for the floor and ceiling, widened slightly so 80% of real results land inside.
+
+**Backtest (walk-forward):** to test 2024, it trains only on 2016–2023, then predicts every 2024 week using pre-game
+information. 2025 is tested the same way. Results on 7,665 fantasy-relevant player-games:
+
+| Method | Avg miss (pts) | Ranking accuracy |
+| --- | --- | --- |
+| Sleeper projections | 5.23 | 0.482 |
+| Original engine (v1 core) | 5.32 | 0.443 |
+| Model (stats, scored PPR) | 5.21 | 0.476 |
+| **Model + Sleeper blend (55/45)** | **5.15** | **0.496** |
+
+The Model lab uses the blend, with the weight chosen by the backtest.
+
 ## Running it
 
 Requirements: Python 3.12+ and Node 20+.
@@ -94,7 +132,7 @@ frontend/src/  React + TypeScript (Vite); pages/ holds one file per page
 
 ## Roadmap
 
-- Trained projection model on historical nflverse data, back-tested against this v1 baseline
+- Model: depth-chart and coaching-change features, per-week weather forecasts, hyperparameter tuning
 - D/ST and yardage-bonus scoring
 - Snap counts and red-zone usage in the model
 - Yahoo league support

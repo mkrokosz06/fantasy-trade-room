@@ -156,7 +156,10 @@ def _sleeper_frame(store: DataStore, weeks: list[int]) -> pd.DataFrame:
     return canon.dropna(subset=["id"]).drop_duplicates(["id", "week"])
 
 
-def compute(store: DataStore, settings: dict) -> Projections:
+def compute(store: DataStore, settings: dict, model: tuple[pd.DataFrame, float] | None = None) -> Projections:
+    """Build projections. With `model` = (per-game ML predictions, Sleeper blend
+    weight learned in the backtest), the ML stat predictions replace the usage
+    model for QB/RB/WR/TE and floor/ceiling ranges are attached."""
     proj = settings["projection"]
     scoring = settings["scoring"]
     end_week = int(proj.get("end_week", 17))
@@ -189,6 +192,18 @@ def compute(store: DataStore, settings: dict) -> Projections:
         ours[s] = ours[s] * ctx
     have_ours = ours.notna().all(axis=1)
 
+    mp = None
+    if model is not None:
+        preds, blend = model
+        mp = rows[["id", "week"]].merge(preds, on=["id", "week"], how="left").set_axis(rows.index)
+        has_m = mp["ppr_model"].notna()
+        ours.loc[has_m] = ours.loc[has_m].fillna(0.0)
+        for s in STATS:
+            if s in mp.columns:
+                m = has_m & mp[s].notna()
+                ours.loc[m, s] = mp.loc[m, s]
+        have_ours = have_ours | has_m
+
     # Sleeper, per game
     sl = _sleeper_frame(store, weeks)
     slm = rows[["id", "week"]].merge(sl, on=["id", "week"], how="left")[STATS].set_axis(rows.index)
@@ -197,7 +212,9 @@ def compute(store: DataStore, settings: dict) -> Projections:
 
     # Lean on Sleeper more when our sample is thin (< ~3 weighted games).
     conf = (base["W"].reindex(rows["id"]).fillna(0).values / 3.0).clip(0, 1)
-    b = blend + (1 - blend) * (1 - conf)
+    # The ML model handles thin samples itself (draft pick, age, team context),
+    # so it uses the backtested blend weight as-is.
+    b = blend if mp is not None else blend + (1 - blend) * (1 - conf)
     b = pd.Series(np.where(~have_ours, 1.0, np.where(~have_sl, 0.0, b)), index=rows.index)
     final = ours.fillna(0.0).multiply(1 - b, axis=0) + slm.multiply(b, axis=0)
     final = final.multiply(rows["avail"], axis=0)
@@ -206,6 +223,13 @@ def compute(store: DataStore, settings: dict) -> Projections:
     weekly = pd.concat([rows, final], axis=1)
     weekly["sleeper_weight"] = b.round(2)
     weekly["pts"] = score(weekly[STATS], scoring, weekly["position"])
+    if mp is not None:
+        # The range is modeled in PPR; rescale it to the user's scoring.
+        med = mp["ppr_model"]
+        ratio = weekly["pts"] / med.clip(lower=0.5)
+        weekly["floor"] = (mp["ppr_q10"] * ratio).clip(lower=0).round(2)
+        weekly["ceiling"] = (mp["ppr_q90"] * ratio).round(2)
+        weekly["ppr_model"] = (med * rows["avail"]).round(2)
 
     nxt = weekly.sort_values("week").groupby("id").head(1).set_index("id")
     summ = weekly.groupby("id").agg(
@@ -221,6 +245,12 @@ def compute(store: DataStore, settings: dict) -> Projections:
     summ["next_matchup"] = nxt["matchup"].round(3)
     # Schedule strength: avg matchup factor of remaining games (>1 = easier)
     summ["sos"] = weekly.groupby("id")["matchup"].mean().round(3)
+    if mp is not None:
+        healthy = weekly[weekly["avail"] > 0]
+        summ["floor_ppg"] = healthy.groupby("id")["floor"].mean().round(2)
+        summ["ceiling_ppg"] = healthy.groupby("id")["ceiling"].mean().round(2)
+        summ["next_floor"] = nxt["floor"]
+        summ["next_ceiling"] = nxt["ceiling"]
 
     return Projections(weekly=weekly, summary=summ, base=base, priors=priors,
                        matchups=mt, weeks=weeks)
@@ -230,10 +260,13 @@ _cache: dict[tuple, Projections] = {}
 _lock = threading.Lock()
 
 
-def get_projections(store: DataStore, settings: dict) -> Projections:
-    key = (store.loaded_at, settings_key(settings))
+def get_projections(store: DataStore, settings: dict, model: tuple[pd.DataFrame, float] | None = None,
+                    model_key: str | None = None) -> Projections:
+    key = (store.loaded_at, settings_key(settings), model_key)
     with _lock:
         if key not in _cache:
-            _cache.clear()
-            _cache[key] = compute(store, settings)
+            # keep one entry per engine
+            for k in [k for k in _cache if k[2] == model_key]:
+                del _cache[k]
+            _cache[key] = compute(store, settings, model)
         return _cache[key]

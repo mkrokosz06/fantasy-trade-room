@@ -96,6 +96,18 @@ def test_espn_settings_conversion():
     assert out["unmapped"]["stats"] == [{"stat_id": 999, "points": 2.0}]
 
 
+def test_rolling_features_never_see_the_current_game():
+    from app.ml.dataset import _ewm_prior
+
+    df = pd.DataFrame({"id": ["a"] * 4 + ["b"] * 2, "x": [10.0, 20.0, None, 40.0, 5.0, 7.0]})
+    out = _ewm_prior(df, "id", ["x"], span=3)["x"].tolist()
+    assert pd.isna(out[0]) and pd.isna(out[4])      # no history before first game
+    assert out[1] == pytest.approx(10.0)             # only game 1 known before game 2
+    assert out[2] == pytest.approx((20 + 0.5 * 10) / 1.5)  # games 1-2, not game 3 itself
+    assert out[3] == out[2]                           # a skipped game adds nothing
+    assert out[5] == pytest.approx(5.0)               # player b never sees player a
+
+
 def test_espn_split_long_field_goals_and_return_tds():
     # Real-league shape: 50-59 (198) and 60+ (201) instead of 50+ (74).
     items = [{"statId": 201, "points": 6.0}, {"statId": 198, "points": 5.0},

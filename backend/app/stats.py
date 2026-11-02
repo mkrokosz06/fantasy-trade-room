@@ -41,7 +41,13 @@ def season_table(store: DataStore, proj: Projections, scoring: dict, season: int
     w = scored_games(store, proj, scoring, season).sort_values(["id", "week"])
     if w.empty:
         return pd.DataFrame()
+    # Usage trends ignore games a player left early (injury exits), otherwise an
+    # injury looks like a lost role. Points-based numbers keep them: that's what
+    # trade partners see.
+    typical = w.groupby("id")["opps"].transform("median")
+    full = ~((typical >= 6) & (w["opps"] < 0.35 * typical))
     w["recent"] = w.groupby("id").cumcount(ascending=False) < 3
+    w["recent_full"] = full & (w[full].groupby("id").cumcount(ascending=False) < 3).reindex(w.index, fill_value=False)
     g = w.groupby("id")
     t = g.agg(
         name=("name", "last"), position=("position", "last"), team=("team", "last"),
@@ -53,12 +59,12 @@ def season_table(store: DataStore, proj: Projections, scoring: dict, season: int
         target_share=("target_share", "mean"), wopr=("wopr", "mean"),
         air_yards_share=("air_yards_share", "mean"),
     )
-    recent = w[w["recent"]].groupby("id").agg(
-        last3_ppg=("pts", "mean"), last3_xfp=("xfp", "mean"),
-        last3_tgt_share=("target_share", "mean"), last3_opps=("opps", "mean"))
-    early = w[~w["recent"]].groupby("id").agg(
+    recent_pts = w[w["recent"]].groupby("id").agg(last3_ppg=("pts", "mean"))
+    recent = w[w["recent_full"]].groupby("id").agg(
+        last3_xfp=("xfp", "mean"), last3_tgt_share=("target_share", "mean"), last3_opps=("opps", "mean"))
+    early = w[full & ~w["recent_full"]].groupby("id").agg(
         prior_xfp=("xfp", "mean"), prior_tgt_share=("target_share", "mean"), prior_opps=("opps", "mean"))
-    t = t.join(recent).join(early)
+    t = t.join(recent_pts).join(recent).join(early)
     t["tgt_pg"] = t["rec_tgt"] / t["games"]
     t["car_pg"] = t["rush_att"] / t["games"]
     t["pos_rank"] = t.groupby("position")["pts"].rank(ascending=False, method="first").astype(int)

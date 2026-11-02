@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import type { Call } from "../api";
+import { useEngine } from "../engine";
 
 export function CallBadge({ call }: { call?: Call | null }) {
   if (!call) return null;
@@ -34,10 +35,11 @@ export function PlayerCell(p: {
   headshot?: string | null;
   injury_status?: string | null;
 }) {
+  const { base } = useEngine();
   return (
     <span className="player-cell">
       <Headshot src={p.headshot} />
-      <Link to={`/player/${encodeURIComponent(p.id)}`}>{p.name}</Link>
+      <Link to={`${base}/player/${encodeURIComponent(p.id)}`}>{p.name}</Link>
       <span className="pos">
         {p.position} {p.team ?? "FA"}
       </span>
@@ -52,7 +54,22 @@ export function Loading({ what = "Loading" }: { what?: string }) {
 
 export function ErrorBox({ error }: { error: string | null }) {
   if (!error) return null;
-  return <div className="error" role="alert">{error}</div>;
+  const untrained = error.includes("hasn't been trained");
+  return (
+    <div className="error" role="alert">
+      {error} {untrained && <Link to="/model">Go to Model lab</Link>}
+    </div>
+  );
+}
+
+/** Floor-ceiling range: where the player lands 80% of the time. */
+export function Range({ floor, ceiling }: { floor?: number | null; ceiling?: number | null }) {
+  if (floor === null || floor === undefined || ceiling === null || ceiling === undefined) return <>–</>;
+  return (
+    <span className="range" title="80% of the time, the player scores between these">
+      {floor.toFixed(1)}–{ceiling.toFixed(1)}
+    </span>
+  );
 }
 
 const POSITIONS = ["ALL", "QB", "RB", "WR", "TE", "K"];

@@ -54,6 +54,49 @@ def id_crosswalk(force: bool = False) -> pd.DataFrame:
     return df.replace({"NA": None, "": None})
 
 
+def _season_parquet(release: str, fname: str, season: int, current_season: int,
+                    base: str = NFLVERSE) -> pd.DataFrame:
+    """Per-season parquet; past seasons are cached forever, the current one refreshes."""
+    past = season < current_season
+    name = f"{'hist_' if past else ''}{fname}"
+    path = cached_download(f"{base}/{release}/{fname}", name,
+                           ttl_hours=math.inf if past else None)
+    return pd.read_parquet(path)
+
+
+def snap_counts(season: int, current_season: int) -> pd.DataFrame:
+    return _season_parquet("snap_counts", f"snap_counts_{season}.parquet", season, current_season)
+
+
+def injury_reports(season: int, current_season: int) -> pd.DataFrame:
+    return _season_parquet("injuries", f"injuries_{season}.parquet", season, current_season)
+
+
+FFOPP = "https://github.com/ffverse/ffopportunity/releases/download"
+
+
+def expected_points(season: int, current_season: int) -> pd.DataFrame:
+    """ffopportunity: per player-game expected stats from a play-by-play model
+    (accounts for field position, so it captures red-zone usage)."""
+    return _season_parquet("latest-data", f"ep_weekly_{season}.parquet", season, current_season,
+                           base=FFOPP)
+
+
+def sleeper_projections_ppr(season: int, week: int) -> pd.DataFrame:
+    """Historical Sleeper PPR projections, used only to benchmark the model."""
+    rows = []
+    for pos in ("QB", "RB", "WR", "TE"):
+        data = cached_json(f"{SLEEPER}/projections/nfl/{season}/{week}",
+                           f"hist_sleeper_proj_{season}_w{week}_{pos}.json", ttl_hours=math.inf,
+                           params=[("season_type", "regular"), ("position[]", pos)])
+        for r in data or []:
+            st = r.get("stats") or {}
+            if st.get("pts_ppr") is not None:
+                rows.append({"sleeper_id": str(r.get("player_id")), "season": season, "week": week,
+                             "sleeper_ppr": float(st["pts_ppr"])})
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------- Sleeper
 def sleeper_state(force: bool = False) -> dict:
     return cached_json(f"{SLEEPER}/v1/state/nfl", "sleeper_state.json", ttl_hours=1, force=force)

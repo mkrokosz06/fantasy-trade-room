@@ -14,6 +14,8 @@ from . import advisor, config, stats, trade
 from .data import espn
 from .data.cache import clear_cache
 from .data.store import get_store
+from .ml import model as ml_model
+from .ml import service as ml_service
 from .projections import RATIOS, get_projections
 from .scoring import SCORING_PRESETS, STAT_LABELS
 from .settings_store import (LEAGUE_PRESETS, SLOT_LABELS, load_settings, save_settings,
@@ -32,11 +34,26 @@ def records(df: pd.DataFrame) -> list[dict]:
 
 
 # ---------------------------------------------------------------- shared context
+ENGINES = ("v1", "ml")
+
+
 class Ctx:
-    def __init__(self):
+    """Everything an endpoint needs, for one projection engine:
+    v1 = usage model + Sleeper; ml = trained LightGBM model + Sleeper."""
+
+    def __init__(self, engine: str = "v1"):
+        self.engine = engine
         self.store = get_store()
         self.settings = load_settings()
-        self.proj = get_projections(self.store, self.settings)
+        self.model_meta = None
+        model = model_key = None
+        if engine == "ml":
+            end_week = int(self.settings["projection"].get("end_week", 17))
+            preds, meta = ml_service.predictions(self.store, end_week)
+            model = (preds, float(meta["backtest"]["blend_sleeper_weight"]))
+            model_key = meta["trained_at"]
+            self.model_meta = meta
+        self.proj = get_projections(self.store, self.settings, model, model_key)
         self.values, self.replacement = player_values(self.proj.summary, self.settings["league"])
         self._season_tbl: dict[int, pd.DataFrame] = {}
         self._signals = None
@@ -62,20 +79,24 @@ class Ctx:
         return self._evaluator
 
 
-_ctx: Ctx | None = None
-_ctx_key = None
+_ctx: dict[str, tuple[tuple, Ctx]] = {}
 _ctx_lock = threading.Lock()
 
 
-def ctx() -> Ctx:
-    global _ctx, _ctx_key
+def ctx(engine: str = "v1") -> Ctx:
+    if engine not in ENGINES:
+        raise HTTPException(400, f"Unknown engine '{engine}'. Use one of {ENGINES}.")
     with _ctx_lock:
         store = get_store()
-        key = (store.loaded_at, settings_key(load_settings()))
-        if _ctx is None or key != _ctx_key:
-            _ctx = Ctx()
-            _ctx_key = key
-        return _ctx
+        trained = (ml_model.load_meta() or {}).get("trained_at") if engine == "ml" else None
+        key = (store.loaded_at, settings_key(load_settings()), trained)
+        cached = _ctx.get(engine)
+        if cached is None or cached[0] != key:
+            try:
+                _ctx[engine] = (key, Ctx(engine))
+            except ml_service.NotTrained as e:
+                raise HTTPException(409, str(e)) from e
+        return _ctx[engine][1]
 
 
 # ---------------------------------------------------------------- meta & settings
@@ -118,8 +139,8 @@ def refresh():
 # ---------------------------------------------------------------- players & stats
 @app.get("/api/players")
 def players(pos: str | None = None, q: str | None = None, season: int | None = None,
-            limit: int = Query(300, le=2000)):
-    c = ctx()
+            limit: int = Query(300, le=2000), engine: str = "v1"):
+    c = ctx(engine)
     season = season or c.store.season
     tbl = c.season_table(season)
     v = c.values[["value", "vorp", "ros_pts", "proj_ppg", "next_pts", "next_opp", "pos_rank",
@@ -140,8 +161,8 @@ def players(pos: str | None = None, q: str | None = None, season: int | None = N
 
 
 @app.get("/api/players/{pid}")
-def player(pid: str):
-    c = ctx()
+def player(pid: str, engine: str = "v1"):
+    c = ctx(engine)
     if pid not in c.store.players.index:
         raise HTTPException(404, "Player not found")
     info = c.store.players.loc[pid]
@@ -156,9 +177,11 @@ def player(pid: str):
             seasons.append({"season": int(s), **json.loads(t.loc[pid].to_json())})
     out["seasons"] = seasons
     wk = c.proj.weekly[c.proj.weekly["id"] == pid]
-    out["projection"] = records(wk[["week", "opp", "is_home", "gameday", "matchup", "vegas", "avail",
-                                    "sleeper_weight", "pts", "pass_yd", "pass_td", "rush_att",
-                                    "rush_yd", "rush_td", "rec_tgt", "rec", "rec_yd", "rec_td"]])
+    pcols = ["week", "opp", "is_home", "gameday", "matchup", "vegas", "avail", "sleeper_weight",
+             "pts", "floor", "ceiling", "pass_yd", "pass_td", "rush_att", "rush_yd", "rush_td",
+             "rec_tgt", "rec", "rec_yd", "rec_td"]
+    out["projection"] = records(wk[[col for col in pcols if col in wk.columns]])
+    out["engine"] = c.engine
     if pid in c.proj.base.index:
         b = c.proj.base.loc[pid]
         pr = c.proj.priors.loc[b["position"]] if b["position"] in c.proj.priors.index else None
@@ -177,8 +200,8 @@ def player(pid: str):
 
 
 @app.get("/api/rankings")
-def rankings(pos: str | None = None, limit: int = Query(300, le=2000)):
-    c = ctx()
+def rankings(pos: str | None = None, limit: int = Query(300, le=2000), engine: str = "v1"):
+    c = ctx(engine)
     df = c.values.join(c.store.players[["injury_status", "headshot", "age"]], how="left")
     if pos:
         df = df[df["position"].isin(pos.upper().split(","))]
@@ -186,8 +209,9 @@ def rankings(pos: str | None = None, limit: int = Query(300, le=2000)):
 
 
 @app.get("/api/projections/week/{week}")
-def week_projections(week: int, pos: str | None = None, limit: int = Query(300, le=2000)):
-    c = ctx()
+def week_projections(week: int, pos: str | None = None, limit: int = Query(300, le=2000),
+                     engine: str = "v1"):
+    c = ctx(engine)
     wk = c.proj.weekly[c.proj.weekly["week"] == week]
     if pos:
         wk = wk[wk["position"].isin(pos.upper().split(","))]
@@ -213,8 +237,8 @@ class TradeIn(BaseModel):
 
 
 @app.post("/api/trade")
-def evaluate_trade(body: TradeIn):
-    c = ctx()
+def evaluate_trade(body: TradeIn, engine: str = "v1"):
+    c = ctx(engine)
     roster_a = roster_b = None
     if body.team_a and body.team_b:
         lg = _league(c)
@@ -230,8 +254,8 @@ def evaluate_trade(body: TradeIn):
 
 
 @app.get("/api/advice")
-def advice(pos: str | None = None, call: str | None = None):
-    c = ctx()
+def advice(pos: str | None = None, call: str | None = None, engine: str = "v1"):
+    c = ctx(engine)
     df = c.signals
     if df.empty:
         return []
@@ -244,7 +268,20 @@ def advice(pos: str | None = None, call: str | None = None):
             "proj_ppg", "perceived_ppg", "ppg", "last3_ppg", "xfp_ppg", "perf_gap", "td", "xtd",
             "td_gap", "usage_trend", "sos", "sos_rank", "value", "perceived_value",
             "injury_status", "headshot", "games"]
+    cols += [col for col in ("floor_ppg", "ceiling_ppg") if col in df.columns]
     return records(df.reset_index()[cols])
+
+
+# ---------------------------------------------------------------- ML model
+@app.get("/api/ml/status")
+def ml_status():
+    return ml_service.status()
+
+
+@app.post("/api/ml/train")
+def ml_train():
+    started = ml_service.start_training()
+    return {"started": started, "status": ml_service.status()}
 
 
 # ---------------------------------------------------------------- ESPN league
@@ -263,8 +300,8 @@ def _rosters(lg: dict) -> dict[str, list[str]]:
 
 
 @app.get("/api/league")
-def league(refresh: bool = False):
-    c = ctx()
+def league(refresh: bool = False, engine: str = "v1"):
+    c = ctx(engine)
     lg = _league(c, force=refresh)
     vals = c.values
     sig = c.signals
@@ -296,8 +333,8 @@ def import_league_settings():
 
 
 @app.get("/api/league/trades")
-def league_trades(team_id: str | None = None):
-    c = ctx()
+def league_trades(team_id: str | None = None, engine: str = "v1"):
+    c = ctx(engine)
     team_id = team_id or c.settings["espn"].get("my_team_id")
     if not team_id:
         raise HTTPException(400, "Pick your team on the League page first.")

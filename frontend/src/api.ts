@@ -91,6 +91,10 @@ export interface RankedPlayer {
   injury_status: string | null;
   headshot: string | null;
   age: number | null;
+  floor_ppg?: number;
+  ceiling_ppg?: number;
+  next_floor?: number;
+  next_ceiling?: number;
 }
 
 export interface Advice {
@@ -113,6 +117,8 @@ export interface Advice {
   injury_status: string | null;
   headshot: string | null;
   games: number;
+  floor_ppg?: number;
+  ceiling_ppg?: number;
 }
 
 export interface Meta {
@@ -168,6 +174,40 @@ export interface League {
   my_team_id: string | null;
   settings: {
     unmapped: { slots: number[]; stats: { stat_id: number; points: number }[] };
+  };
+}
+
+export interface MetricRow {
+  mae: number;
+  bias: number;
+  rank_corr: number;
+  n: number;
+}
+export interface MlStatus {
+  status: "idle" | "training" | "ready" | "error";
+  trained: boolean;
+  log: string[];
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  meta: null | {
+    trained_at: string;
+    seasons: [number, number];
+    through_week: number;
+    training_games: number;
+    n_features: number;
+    seconds: number;
+    backtest: {
+      seasons: number[];
+      games: number;
+      blend_sleeper_weight: number;
+      range_coverage: number;
+      range_coverage_raw?: number;
+      range_scale?: number;
+      range_width: number;
+      methods: ({ key: string; label: string; all: MetricRow } & Record<string, MetricRow | string>)[];
+    };
+    importance: Record<string, { feature: string; label: string; share: number }[]>;
   };
 }
 
