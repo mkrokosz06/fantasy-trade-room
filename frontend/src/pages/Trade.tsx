@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, fmt, useApi, type Call, type League, type RankedPlayer, type Settings } from "../api";
+import { api, fmt, useApi, type Call, type League, type Meta, type RankedPlayer, type Settings } from "../api";
 import { CallBadge, ErrorBox, Headshot } from "../components/bits";
+import { GameLog } from "../components/GameLog";
 import { PlayerSearch, type SearchItem } from "../components/PlayerSearch";
 import { YardField } from "../components/YardField";
 import { useEngine } from "../engine";
@@ -43,6 +44,15 @@ export default function Trade() {
   const [teamB, setTeamB] = useState(params.get("tb") || "");
   const [result, setResult] = useState<TradeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const meta = useApi<Meta>("/api/meta");
+  const [openLogs, setOpenLogs] = useState<Set<string>>(() => new Set(split("logs")));
+  const toggleLog = (id: string) =>
+    setOpenLogs((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
 
   // Default side A to my ESPN team once the league loads.
   useEffect(() => {
@@ -137,24 +147,35 @@ export default function Trade() {
       <div className="chips">
         {ids.map((id) => {
           const p = byId.get(id);
+          const open = openLogs.has(id);
           return (
-            <div className="chip" key={id}>
-              <Headshot src={p?.headshot} />
-              <span>
-                <b>{p?.name ?? id}</b>{" "}
-                <span className="pos">
-                  {p?.position} {p?.team ?? ""}
+            <div key={id} className="chip-wrap">
+              <div className="chip">
+                <Headshot src={p?.headshot} />
+                <span>
+                  <b>{p?.name ?? id}</b>{" "}
+                  <span className="pos">
+                    {p?.position} {p?.team ?? ""}
+                  </span>
                 </span>
-              </span>
-              <span className="row">
-                <CallBadge call={callOf(id, resultSide)} />
-                <span className="num" title="Value: rest-of-season points over a replacement-level player">
-                  {fmt(p?.value, 0)}
+                <span className="row">
+                  <button
+                    className="linkbtn small"
+                    aria-expanded={open}
+                    onClick={() => toggleLog(id)}
+                  >
+                    {open ? "Hide game log" : "Game log"}
+                  </button>
+                  <CallBadge call={callOf(id, resultSide)} />
+                  <span className="num" title="Value: rest-of-season points over a replacement-level player">
+                    {fmt(p?.value, 0)}
+                  </span>
                 </span>
-              </span>
-              <button className="x" aria-label={`Remove ${p?.name ?? id}`} onClick={() => set(ids.filter((x) => x !== id))}>
-                ×
-              </button>
+                <button className="x" aria-label={`Remove ${p?.name ?? id}`} onClick={() => set(ids.filter((x) => x !== id))}>
+                  ×
+                </button>
+              </div>
+              {open && <GameLog id={id} lastWeek={meta.data?.last_stats_week} />}
             </div>
           );
         })}

@@ -168,6 +168,13 @@ td a:hover { text-decoration: underline; }
   display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center;
   padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--chalk);
 }
+.chip-wrap { display: flex; flex-direction: column; gap: 6px; }
+.gamelog { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); }
+.gamelog .tablewrap { max-height: 320px; overflow-y: auto; }
+.gamelog table { font-size: 0.82rem; }
+.gamelog th, .gamelog td { padding: 5px 8px; }
+.linkbtn { border: 0; background: none; color: var(--turf); font-weight: 600; cursor: pointer; padding: 2px 4px; text-decoration: underline; text-underline-offset: 2px; }
+.linkbtn:hover { color: var(--turf-soft); }
 .chip .x { border: 0; background: none; cursor: pointer; color: var(--muted); font-size: 1.1rem; padding: 0 4px; }
 .chip .x:hover { color: var(--sell); }
 .search { position: relative; }
