@@ -77,6 +77,49 @@ SCORING_PRESETS: dict[str, dict] = {
 }
 
 
+# ---------------------------------------------------------------- team defense (D/ST)
+DST_STATS = ["dst_sack", "dst_int", "dst_fum_rec", "dst_safety", "dst_blk", "dst_td", "dst_pa", "dst_ya"]
+
+# ESPN standard D/ST scoring. Tiers are [low, high, points], inclusive.
+DEFAULT_DST = {
+    "sack": 1.0, "int": 2.0, "fum_rec": 2.0, "safety": 2.0, "blk_kick": 2.0, "td": 6.0,
+    "pa_tiers": [[0, 0, 5], [1, 6, 4], [7, 13, 3], [14, 17, 1], [18, 27, 0], [28, 34, -1], [35, 45, -3], [46, 999, -5]],
+    "ya_tiers": [[0, 99, 5], [100, 199, 3], [200, 299, 2], [300, 349, 0], [350, 399, -1], [400, 449, -3],
+                 [450, 499, -5], [500, 549, -6], [550, 9999, -7]],
+}
+# Typical game-to-game spread, used to turn projected averages into expected tier points.
+PA_SD, YA_SD = 9.5, 70.0
+
+
+def _norm_cdf(x):
+    from math import erf, sqrt
+    return 0.5 * (1 + erf(x / sqrt(2)))
+
+
+def _tier_points(values: pd.Series, tiers: list, sd: float | None) -> pd.Series:
+    """Exact tier points for actual values, or expected tier points for projected
+    averages (treating the result as roughly normal around the projection)."""
+    out = pd.Series(0.0, index=values.index)
+    for lo, hi, pts in tiers:
+        if not pts:
+            continue
+        if sd is None:
+            out += ((values >= lo) & (values <= hi)).astype(float) * pts
+        else:
+            p = values.apply(lambda m: _norm_cdf((hi + 0.5 - m) / sd) - _norm_cdf((lo - 0.5 - m) / sd))
+            out += p * pts
+    return out
+
+
+def score_dst(df: pd.DataFrame, rules: dict | None, expected: bool = False) -> pd.Series:
+    r = {**DEFAULT_DST, **(rules or {})}
+    pts = (df["dst_sack"] * r["sack"] + df["dst_int"] * r["int"] + df["dst_fum_rec"] * r["fum_rec"]
+           + df["dst_safety"] * r["safety"] + df["dst_blk"] * r["blk_kick"] + df["dst_td"] * r["td"])
+    pts = pts + _tier_points(df["dst_pa"], r["pa_tiers"], PA_SD if expected else None)
+    pts = pts + _tier_points(df["dst_ya"], r["ya_tiers"], YA_SD if expected else None)
+    return pts.round(2)
+
+
 def to_canonical(df: pd.DataFrame, mapping: dict[str, list[str]]) -> pd.DataFrame:
     """Build canonical stat columns from a source frame (missing columns -> 0)."""
     out = {}

@@ -2,6 +2,7 @@ import { useParams } from "react-router-dom";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { fmt, pct, useApi, type Call, type Meta, type MlStatus } from "../api";
 import { CallBadge, ErrorBox, InjuryBadge, Loading, Range } from "../components/bits";
+import { GameLog } from "../components/GameLog";
 import { useEngine } from "../engine";
 
 const GROUP: Record<string, string> = { QB: "QB", RB: "RB", WR: "REC", TE: "REC" };
@@ -180,6 +181,12 @@ export default function Player() {
         )}
       </div>
 
+      {pos === "DST" ? (
+        <section className="stack">
+          <h2>Game log</h2>
+          <GameLog id={info.id} lastWeek={meta.data?.last_stats_week} />
+        </section>
+      ) : (
       <section className="stack">
         <h2>Game log</h2>
         <div className="tablewrap">
@@ -208,6 +215,7 @@ export default function Player() {
           </table>
         </div>
       </section>
+      )}
     </div>
   );
 }

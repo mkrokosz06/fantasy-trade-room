@@ -27,7 +27,7 @@ import pandas as pd
 
 from .data import sources
 from .data.store import DataStore
-from .scoring import SLEEPER_MAP, STATS, score, to_canonical
+from .scoring import DST_STATS, SLEEPER_MAP, STATS, score, score_dst, to_canonical
 from .settings_store import settings_key
 
 OPP_STATS = ["pass_att", "rush_att", "rec_tgt"]
@@ -156,6 +156,30 @@ def _sleeper_frame(store: DataStore, weeks: list[int]) -> pd.DataFrame:
     return canon.dropna(subset=["id"]).drop_duplicates(["id", "week"])
 
 
+def _add_dst(weekly: pd.DataFrame, store: DataStore, weeks: list[int], scoring: dict) -> None:
+    """Team-defense projections from Sleeper's weekly D/ST projections, scored
+    with the league's D/ST rules (points/yards-allowed tiers as expected values)."""
+    is_dst = weekly["position"] == "DST"
+    if not is_dst.any():
+        return
+    frames = []
+    for wk in weeks:
+        try:
+            f = sources.sleeper_def_projections(store.season, wk)
+        except Exception:  # noqa: BLE001
+            continue
+        if len(f):
+            frames.append(f)
+    if not frames:
+        return
+    proj = pd.concat(frames, ignore_index=True).drop_duplicates(["team", "week"])
+    m = weekly.loc[is_dst, ["team", "week"]].merge(proj, on=["team", "week"], how="left")
+    # Weeks Sleeper hasn't projected yet: use that defense's average, then the league's.
+    for c in DST_STATS:
+        m[c] = m[c].fillna(m.groupby("team")[c].transform("mean")).fillna(proj[c].mean())
+    weekly.loc[is_dst, "pts"] = score_dst(m, scoring.get("dst"), expected=True).values
+
+
 def compute(store: DataStore, settings: dict,
             model: tuple[pd.DataFrame, float | dict] | None = None) -> Projections:
     """Build projections. With `model` = (per-game ML predictions, Sleeper blend
@@ -233,6 +257,7 @@ def compute(store: DataStore, settings: dict,
     weekly = pd.concat([rows, final], axis=1)
     weekly["sleeper_weight"] = b.round(2)
     weekly["pts"] = score(weekly[STATS], scoring, weekly["position"])
+    _add_dst(weekly, store, weeks, scoring)
     if mp is not None:
         # The range is modeled in PPR; rescale it to the user's scoring.
         med = mp["ppr_model"]
@@ -240,6 +265,11 @@ def compute(store: DataStore, settings: dict,
         weekly["floor"] = (mp["ppr_q10"] * ratio).clip(lower=0).round(2)
         weekly["ceiling"] = (mp["ppr_q90"] * ratio).round(2)
         weekly["ppr_model"] = (med * rows["avail"]).round(2)
+        # Team defenses aren't in the ML model; give them a typical spread.
+        d = weekly["position"] == "DST"
+        sd = 0.6 * weekly.loc[d, "pts"] + 3.0
+        weekly.loc[d, "floor"] = (weekly.loc[d, "pts"] - 1.28 * sd).clip(lower=0).round(2)
+        weekly.loc[d, "ceiling"] = (weekly.loc[d, "pts"] + 1.28 * sd).round(2)
 
     nxt = weekly.sort_values("week").groupby("id").head(1).set_index("id")
     summ = weekly.groupby("id").agg(

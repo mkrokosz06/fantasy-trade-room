@@ -29,7 +29,7 @@ def replacement_levels(summary: pd.DataFrame, league: dict) -> dict[str, float]:
     slots = league.get("slots", {})
     pool = summary.sort_values("ros_pts", ascending=False)
     taken: set = set()
-    starters = {p: 0 for p in SKILL + ["K"]}
+    starters = {p: 0 for p in SKILL + ["K", "DST"]}
     for slot, n in ordered_slots(slots):
         elig = SLOT_ELIGIBILITY[slot]
         cand = pool[pool["position"].isin(elig) & ~pool.index.isin(taken)].head(n * teams)
@@ -40,8 +40,8 @@ def replacement_levels(summary: pd.DataFrame, league: dict) -> dict[str, float]:
     bench_total = int(slots.get("BENCH", 0)) * teams * BENCH_DEPTH_SHARE
     skill_starters = sum(starters[p] for p in SKILL) or 1
     repl = {}
-    for p in SKILL + ["K"]:
-        extra = 0 if p == "K" else math.ceil(bench_total * starters[p] / skill_starters)
+    for p in SKILL + ["K", "DST"]:
+        extra = 0 if p in ("K", "DST") else math.ceil(bench_total * starters[p] / skill_starters)
         ranked = pool[pool["position"] == p]["ros_pts"].reset_index(drop=True)
         i = starters[p] + extra
         repl[p] = float(ranked.iloc[i]) if i < len(ranked) else 0.0

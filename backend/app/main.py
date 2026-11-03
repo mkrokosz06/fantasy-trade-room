@@ -20,7 +20,7 @@ from .league.sim import situation
 from .ml import model as ml_model
 from .ml import service as ml_service
 from .projections import RATIOS, get_projections
-from .scoring import SCORING_PRESETS, STAT_LABELS
+from .scoring import SCORING_PRESETS, STAT_LABELS, score_dst
 from .settings_store import (LEAGUE_PRESETS, SLOT_LABELS, load_settings, save_settings,
                              settings_key)
 from .values import LineupEvaluator, player_values
@@ -173,7 +173,15 @@ def player(pid: str, engine: str = "v1"):
     out: dict[str, Any] = {"info": json.loads(info.to_json())}
     if pid in c.values.index:
         out["value"] = json.loads(c.values.loc[pid].to_json())
-    out["game_log"] = records(stats.game_log(c.store, c.proj, c.settings["scoring"], pid))
+    if info["position"] == "DST":
+        dw = c.store.dst_weekly
+        g = dw[dw["id"] == pid].copy() if len(dw) else pd.DataFrame()
+        if len(g):
+            g["pts"] = score_dst(g, c.settings["scoring"].get("dst"))
+            g = g.sort_values(["season", "week"], ascending=False)
+        out["game_log"] = records(g)
+    else:
+        out["game_log"] = records(stats.game_log(c.store, c.proj, c.settings["scoring"], pid))
     seasons = []
     for s in sorted(c.store.weekly["season"].unique(), reverse=True):
         t = c.season_table(int(s))

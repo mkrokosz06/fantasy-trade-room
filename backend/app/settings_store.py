@@ -14,7 +14,7 @@ from .scoring import SCORING_PRESETS
 # Which player positions each lineup slot accepts. Slots are filled in order of
 # fewest eligible positions first (QB before FLEX before SUPERFLEX).
 SLOT_ELIGIBILITY: dict[str, list[str]] = {
-    "QB": ["QB"], "RB": ["RB"], "WR": ["WR"], "TE": ["TE"], "K": ["K"],
+    "QB": ["QB"], "RB": ["RB"], "WR": ["WR"], "TE": ["TE"], "K": ["K"], "DST": ["DST"],
     "WRRB": ["RB", "WR"], "WRTE": ["WR", "TE"],
     "FLEX": ["RB", "WR", "TE"], "SFLEX": ["QB", "RB", "WR", "TE"],
 }

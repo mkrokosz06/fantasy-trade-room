@@ -116,6 +116,28 @@ def sleeper_projections_ppr(season: int, week: int) -> pd.DataFrame:
     return df.rename(columns={"sl_pts_ppr": "sleeper_ppr"})[["sleeper_id", "season", "week", "sleeper_ppr"]]
 
 
+def team_stats_week(season: int, current_season: int) -> pd.DataFrame:
+    return _season_parquet("stats_team", f"stats_team_week_{season}.parquet", season, current_season)
+
+
+def sleeper_def_projections(season: int, week: int) -> pd.DataFrame:
+    """Sleeper's weekly team-defense projections as D/ST stats."""
+    rows = cached_json(f"{SLEEPER}/projections/nfl/{season}/{week}", f"sleeper_def_{season}_w{week}.json",
+                       ttl_hours=6, params=[("season_type", "regular"), ("position[]", "DEF")])
+    out = []
+    for r in rows or []:
+        s = r.get("stats") or {}
+        if not s.get("gp", 1):
+            continue
+        out.append({"team": fix_team(str(r.get("player_id"))), "week": week,
+                    "dst_sack": s.get("sack", 0.0), "dst_int": s.get("int", 0.0),
+                    "dst_fum_rec": s.get("fum_rec", 0.0), "dst_safety": s.get("safe", 0.0),
+                    "dst_blk": s.get("blk_kick", 0.0),
+                    "dst_td": (s.get("def_td", 0.0) or 0.0) + (s.get("st_td", 0.0) or 0.0),
+                    "dst_pa": s.get("pts_allow", 21.0), "dst_ya": s.get("yds_allow", 330.0)})
+    return pd.DataFrame(out)
+
+
 def depth_charts(season: int, current_season: int) -> pd.DataFrame:
     return _season_parquet("depth_charts", f"depth_charts_{season}.parquet", season, current_season)
 

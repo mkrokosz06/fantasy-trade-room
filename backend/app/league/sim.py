@@ -86,6 +86,10 @@ class LeagueSim:
 
         w = weekly.copy()
         w["sd"] = _player_sd(w["pts"], w.get("floor"), w.get("ceiling"))
+        # A team with no D/ST on its roster still starts one off waivers: use the
+        # league-average defense projection for it.
+        d = w[w["position"] == "DST"]
+        self.dst_fill = (float(d["pts"].mean()) if len(d) else DST_MEAN, DST_SD)
         self.wk = {wk: dict(zip(g["id"], zip(g["position"], g["pts"], g["sd"])))
                    for wk, g in w.groupby("week")}
         self.positions = dict(zip(w["id"], w["position"]))
@@ -115,13 +119,16 @@ class LeagueSim:
                 starters = self.current_starters.get(team, [])
                 done = sum(self.actuals.get(p, 0.0) for p in starters if p not in wkp)
                 rem = [wkp[p] for p in starters if p in wkp]
-                mean[i] = done + sum(x[1] for x in rem) + (DST_MEAN if self.slots.get("DST") else 0)
-                var[i] = sum(x[2] ** 2 for x in rem) + (DST_SD ** 2 if self.slots.get("DST") else 0)
+                mean[i] = done + sum(x[1] for x in rem)
+                var[i] = sum(x[2] ** 2 for x in rem)
                 continue
             cand = [(p, *wkp[p][:2]) for p in roster if p in wkp]
             starters = best_lineup(cand, self.slots)
-            mean[i] = sum(wkp[p][1] for p in starters) + (DST_MEAN if self.slots.get("DST") else 0)
-            var[i] = sum(wkp[p][2] ** 2 for p in starters) + (DST_SD ** 2 if self.slots.get("DST") else 0)
+            mean[i] = sum(wkp[p][1] for p in starters)
+            var[i] = sum(wkp[p][2] ** 2 for p in starters)
+            if self.slots.get("DST") and not any(self.positions.get(p) == "DST" for p in starters):
+                mean[i] += self.dst_fill[0]
+                var[i] += self.dst_fill[1] ** 2
         return mean, np.sqrt(var)
 
     # ------------------------------------------------------------ simulate

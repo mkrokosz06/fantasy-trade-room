@@ -20,6 +20,21 @@ USAGE_COLS = ["target_share", "air_yards_share", "wopr", "receiving_air_yards",
               "passing_epa", "rushing_epa", "receiving_epa"]
 
 
+TEAM_NICKS = {
+    "ARI": "Cardinals", "ATL": "Falcons", "BAL": "Ravens", "BUF": "Bills", "CAR": "Panthers", "CHI": "Bears",
+    "CIN": "Bengals", "CLE": "Browns", "DAL": "Cowboys", "DEN": "Broncos", "DET": "Lions", "GB": "Packers",
+    "HOU": "Texans", "IND": "Colts", "JAX": "Jaguars", "KC": "Chiefs", "LA": "Rams", "LAC": "Chargers",
+    "LV": "Raiders", "MIA": "Dolphins", "MIN": "Vikings", "NE": "Patriots", "NO": "Saints", "NYG": "Giants",
+    "NYJ": "Jets", "PHI": "Eagles", "PIT": "Steelers", "SEA": "Seahawks", "SF": "49ers", "TB": "Buccaneers",
+    "TEN": "Titans", "WAS": "Commanders",
+}
+ESPN_LOGO = {"LA": "lar", "WAS": "wsh"}
+
+
+def dst_id(team: str) -> str:
+    return f"DST:{team}"
+
+
 @dataclass
 class DataStore:
     season: int
@@ -28,6 +43,7 @@ class DataStore:
     players: pd.DataFrame
     loaded_at: datetime
     warnings: list[str] = field(default_factory=list)
+    dst_weekly: pd.DataFrame = field(default_factory=pd.DataFrame)  # actual team-defense results
 
     @property
     def last_stats_week(self) -> int:
@@ -125,6 +141,52 @@ def _load_players(weekly: pd.DataFrame, season: int, force: bool) -> pd.DataFram
     return players
 
 
+def _dst_players() -> pd.DataFrame:
+    rows = [{"id": dst_id(t), "name": f"{n} D/ST", "position": "DST", "team": t,
+             "headshot": f"https://a.espncdn.com/i/teamlogos/nfl/500/{ESPN_LOGO.get(t, t.lower())}.png",
+             "search_rank": 500} for t, n in TEAM_NICKS.items()]
+    return pd.DataFrame(rows)
+
+
+def _load_dst_weekly(season: int, warnings: list[str]) -> pd.DataFrame:
+    """Actual team-defense results per game: sacks, takeaways, TDs, points and yards allowed."""
+    sched = sources.schedules()
+    sched = sched[sched["game_type"] == "REG"]
+    frames = []
+    for s in range(season - HISTORY_SEASONS, season + 1):
+        try:
+            ts = sources.team_stats_week(s, season)
+        except Exception as e:  # noqa: BLE001
+            warnings.append(f"No team stats for {s}: {e.__class__.__name__}")
+            continue
+        ts = ts[ts["season_type"] == "REG"].copy()
+        num = lambda c: pd.to_numeric(ts[c], errors="coerce").fillna(0) if c in ts.columns else 0.0  # noqa: E731
+        ts["yds_gained"] = num("passing_yards") - num("sack_yards_lost") + num("rushing_yards")
+        offense = ts[["season", "week", "team", "yds_gained"]].rename(columns={"team": "opponent_team", "yds_gained": "dst_ya"})
+        f = pd.DataFrame({
+            "season": ts["season"].astype(int), "week": ts["week"].astype(int), "team": ts["team"],
+            "opp": ts["opponent_team"], "game_id": ts["game_id"],
+            "dst_sack": num("def_sacks"), "dst_int": num("def_interceptions"),
+            "dst_fum_rec": num("fumble_recovery_opp"), "dst_safety": num("def_safeties"),
+            "dst_blk": num("def_punt_blocks") + num("def_fg_blocks"),
+            "dst_td": num("def_tds") + num("special_teams_tds"),
+        })
+        f = f.merge(offense, left_on=["season", "week", "opp"], right_on=["season", "week", "opponent_team"],
+                    how="left").drop(columns=["opponent_team"])
+        g = sched[sched["season"] == s]
+        pa = pd.concat([
+            pd.DataFrame({"game_id": g["game_id"], "team": g["home_team"], "dst_pa": g["away_score"]}),
+            pd.DataFrame({"game_id": g["game_id"], "team": g["away_team"], "dst_pa": g["home_score"]}),
+        ])
+        f = f.merge(pa, on=["game_id", "team"], how="left")
+        frames.append(f)
+    if not frames:
+        return pd.DataFrame()
+    out = pd.concat(frames, ignore_index=True)
+    out["id"] = out["team"].map(dst_id)
+    return out.dropna(subset=["dst_pa"])
+
+
 _lock = threading.Lock()
 _store: DataStore | None = None
 
@@ -139,6 +201,9 @@ def get_store(force: bool = False) -> DataStore:
             weekly = _load_weekly(season, warnings, force)
             games = _load_games(season, force)
             players = _load_players(weekly, season, force)
+            dst = _dst_players().set_index("id", drop=False)
+            players = pd.concat([players, dst[~dst.index.isin(players.index)]])
+            dst_weekly = _load_dst_weekly(season, warnings)
             _store = DataStore(season=season, weekly=weekly, games=games, players=players,
-                               loaded_at=datetime.now(timezone.utc), warnings=warnings)
+                               loaded_at=datetime.now(timezone.utc), warnings=warnings, dst_weekly=dst_weekly)
         return _store

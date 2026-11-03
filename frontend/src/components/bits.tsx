@@ -72,7 +72,7 @@ export function Range({ floor, ceiling }: { floor?: number | null; ceiling?: num
   );
 }
 
-const POSITIONS = ["ALL", "QB", "RB", "WR", "TE", "K"];
+const POSITIONS = ["ALL", "QB", "RB", "WR", "TE", "K", "DST"];
 
 export function PosFilter({
   value,
@@ -85,9 +85,9 @@ export function PosFilter({
 }) {
   return (
     <div className="seg" role="group" aria-label="Position">
-      {POSITIONS.filter((p) => withK || p !== "K").map((p) => (
+      {POSITIONS.filter((p) => withK || (p !== "K" && p !== "DST")).map((p) => (
         <button key={p} aria-pressed={value === p} onClick={() => onChange(p)}>
-          {p === "ALL" ? "All" : p}
+          {p === "ALL" ? "All" : p === "DST" ? "D/ST" : p}
         </button>
       ))}
     </div>

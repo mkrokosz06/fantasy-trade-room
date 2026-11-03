@@ -46,7 +46,7 @@ export function GameLog({ id, lastWeek }: { id: string; lastWeek?: number }) {
   const opps = (g: Game) => n(g.pass_att) + n(g.rush_att) + n(g.rec_tgt);
   const vols = games.map(opps).sort((a, b) => a - b);
   const typical = vols.length ? vols[Math.floor(vols.length / 2)] : 0;
-  const leftEarly = (g: Game) => pos !== "K" && typical >= 6 && opps(g) < 0.35 * typical;
+  const leftEarly = (g: Game) => pos !== "K" && pos !== "DST" && typical >= 6 && opps(g) < 0.35 * typical;
 
   const pts = games.map((g) => n(g.pts));
   const ppg = pts.length ? pts.reduce((a, b) => a + b, 0) / pts.length : 0;
@@ -76,7 +76,16 @@ export function GameLog({ id, lastWeek }: { id: string; lastWeek?: number }) {
             { label: "Rec yds", v: (g) => n(g.rec_yd) },
             { label: "Rec TD", v: (g) => n(g.rec_td) },
           ]
-        : pos === "K"
+        : pos === "DST"
+          ? [
+              { label: "Sacks", v: (g) => n(g.dst_sack) },
+              { label: "INT", v: (g) => n(g.dst_int) },
+              { label: "Fum rec", v: (g) => n(g.dst_fum_rec) },
+              { label: "TD", title: "Defensive and return touchdowns", v: (g) => n(g.dst_td) },
+              { label: "Pts allowed", v: (g) => n(g.dst_pa) },
+              { label: "Yds allowed", v: (g) => Math.round(n(g.dst_ya)) },
+            ]
+          : pos === "K"
           ? [
               { label: "FG 0-39", v: (g) => n(g.fg_0_39) },
               { label: "FG 40-49", v: (g) => n(g.fg_40_49) },
@@ -100,7 +109,7 @@ export function GameLog({ id, lastWeek }: { id: string; lastWeek?: number }) {
         <div className="row" style={{ gap: 18 }}>
           <span className="small"><b>{fmt(ppg)}</b> <span className="muted">PPG</span></span>
           <span className="small"><b>{fmt(l3)}</b> <span className="muted">last 3</span></span>
-          {pos !== "K" && (
+          {pos !== "K" && pos !== "DST" && (
             <span className="small" title="Expected points per game from usage at league-average efficiency">
               <b>{fmt(xppg)}</b> <span className="muted">expected PPG</span>
             </span>
@@ -123,7 +132,7 @@ export function GameLog({ id, lastWeek }: { id: string; lastWeek?: number }) {
               <th>Wk</th>
               <th>Opp</th>
               <th className="n" title="Fantasy points with your league's scoring">Pts</th>
-              {pos !== "K" && <th className="n" title="Expected points from this game's usage">xFP</th>}
+              {pos !== "K" && pos !== "DST" && <th className="n" title="Expected points from this game's usage">xFP</th>}
               {cols.map((c) => <th key={c.label} className="n" title={c.title}>{c.label}</th>)}
             </tr>
           </thead>
@@ -132,7 +141,7 @@ export function GameLog({ id, lastWeek }: { id: string; lastWeek?: number }) {
               "missed" in g ? (
                 <tr key={`m${g.week}`} className="muted">
                   <td>{g.week}</td>
-                  <td colSpan={cols.length + (pos !== "K" ? 3 : 2)} className="small">No game: bye week, injured or inactive</td>
+                  <td colSpan={cols.length + (pos !== "K" && pos !== "DST" ? 3 : 2)} className="small">No game: bye week, injured or inactive</td>
                 </tr>
               ) : (
                 <tr key={String(g.week)}>
@@ -145,8 +154,8 @@ export function GameLog({ id, lastWeek }: { id: string; lastWeek?: number }) {
                       </span>
                     )}
                   </td>
-                  <td className="n"><b className={n(g.pts) >= ppg * 1.25 ? "delta up" : n(g.pts) <= ppg * 0.6 ? "delta down" : ""}>{fmt(n(g.pts))}</b></td>
-                  {pos !== "K" && <td className="n muted">{fmt(n(g.xfp))}</td>}
+                  <td className="n"><b className={ppg < 1 ? "" : n(g.pts) >= ppg * 1.25 ? "delta up" : n(g.pts) <= ppg * 0.6 ? "delta down" : ""}>{fmt(n(g.pts))}</b></td>
+                  {pos !== "K" && pos !== "DST" && <td className="n muted">{fmt(n(g.xfp))}</td>}
                   {cols.map((c) => <td key={c.label} className="n">{c.v(g)}</td>)}
                 </tr>
               ),

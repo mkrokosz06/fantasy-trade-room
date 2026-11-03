@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from ..data import espn
-from ..scoring import STATS, score
+from ..scoring import STATS, score, score_dst
 from ..trade import side_value
 from ..values import player_values
 from .sim import LeagueSim, situation
@@ -33,6 +33,10 @@ class LeagueContext:
         w = c.store.weekly
         wk = w[(w["season"] == c.store.season) & (w["week"] == cur)]
         actuals = dict(zip(wk["id"], score(wk[STATS], c.settings["scoring"], wk["position"])))
+        dw = c.store.dst_weekly
+        if len(dw):
+            dcur = dw[(dw["season"] == c.store.season) & (dw["week"] == cur)]
+            actuals.update(zip(dcur["id"], score_dst(dcur, c.settings["scoring"].get("dst"))))
         self.sim = LeagueSim(c.proj.weekly, league, c.settings["league"]["slots"], current_actuals=actuals)
         self.odds = self.sim.run()
 
@@ -52,6 +56,8 @@ class LeagueContext:
         self.espn = pd.DataFrame()
         if not df.empty:
             df["id"] = df["espn_id"].map(espn_map)
+            if "dst_id" in df.columns:
+                df["id"] = df["id"].fillna(df["dst_id"])
             df = df.dropna(subset=["id"]).drop_duplicates("id").set_index("id")
             self.espn = df
         # Perceived value: our value framework, but fed ESPN's projections.

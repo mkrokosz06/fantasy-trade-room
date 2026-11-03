@@ -38,12 +38,26 @@ STAT_IDS = {
 # 50+ FG bucket and one return-TD bucket, so 60+ FGs and punt return TDs
 # borrow the 50-59 / kickoff values unless those are absent.
 FALLBACK_IDS = {201: "fg_50p", 102: "st_td"}
+# Team defense scoring ids.
+DST_IDS = {"sack": 99, "int": 95, "fum_rec": 96, "safety": 98, "blk_kick": 97}
+DST_TD_IDS = [93, 94, 103, 104, 101, 102]  # blocked-kick, defensive, INT/fumble return, kick/punt return TDs
+# 18-21 and 22-27 points allowed score 0 in ESPN standard; their ids aren't
+# confirmed, so they use placeholder ids that never match (always 0 points).
+DST_PA_IDS = {89: (0, 0), 90: (1, 6), 91: (7, 13), 92: (14, 17), -1821: (18, 21), -2227: (22, 27),
+              123: (28, 34), 124: (35, 45), 125: (46, 999)}
+DST_YA_IDS = {128: (0, 99), 129: (100, 199), 130: (200, 299), 131: (300, 349), 132: (350, 399),
+              133: (400, 449), 134: (450, 499), 135: (500, 549), 136: (550, 9999)}
 # Distance-specific misses all collapse into our single fg_miss stat.
 MISS_IDS = {76: "fg_miss", 79: "fg_miss", 82: "fg_miss"}
 
 
 class ESPNError(Exception):
     pass
+
+
+def dst_player_id(pro_team_id) -> str | None:
+    team = PRO_TEAMS.get(pro_team_id)
+    return f"DST:{team}" if team and team != "FA" else None
 
 
 def fetch_league(league_id: str | None = None, season: int | None = None,
@@ -103,7 +117,7 @@ def fetch_player_projections(league_id: str, season: int, scoring_period: int, f
 
     url = BASE.format(season=season, league_id=league_id)
     flt = {"players": {"filterStatus": {"value": ["FREEAGENT", "WAIVERS", "ONTEAM"]},
-                       "filterSlotIds": {"value": [0, 2, 4, 6, 17, 23]},
+                       "filterSlotIds": {"value": [0, 2, 4, 6, 16, 17, 23]},
                        "limit": 600, "sortPercOwned": {"sortPriority": 1, "sortAsc": False}}}
     data = cached_json(url, f"espn_players_{league_id}_{season}_p{scoring_period}.json", ttl_hours=3, force=force,
                        params=[("view", "kona_player_info"), ("scoringPeriodId", scoring_period)],
@@ -112,6 +126,7 @@ def fetch_player_projections(league_id: str, season: int, scoring_period: int, f
     for e in data.get("players", []):
         p = e.get("player") or {}
         rec = {"espn_id": str(p.get("id")), "name": p.get("fullName"),
+               "dst_id": dst_player_id(p.get("proTeamId")) if p.get("defaultPositionId") == 16 else None,
                "position": POSITION.get(p.get("defaultPositionId")), "on_team_id": e.get("onTeamId") or 0,
                "status": e.get("status"), "pct_owned": (p.get("ownership") or {}).get("percentOwned"),
                "espn_ros": None, "espn_ros_avg": None, "espn_week": None, "espn_actual": None}
@@ -156,9 +171,12 @@ def parse_league(raw: dict, espn_to_id: dict[str, str]) -> dict:
         for e in (t.get("roster") or {}).get("entries", []):
             p = (e.get("playerPoolEntry") or {}).get("player") or {}
             espn_id = str(p.get("id") or e.get("playerId"))
+            pid = espn_to_id.get(espn_id)
+            if POSITION.get(p.get("defaultPositionId")) == "DST":
+                pid = dst_player_id(p.get("proTeamId"))
             roster.append({
                 "espn_id": espn_id,
-                "id": espn_to_id.get(espn_id),
+                "id": pid,
                 "name": p.get("fullName"),
                 "position": POSITION.get(p.get("defaultPositionId")),
                 "pro_team": PRO_TEAMS.get(p.get("proTeamId")),
@@ -232,10 +250,19 @@ def convert_settings(settings: dict) -> dict:
     if miss_vals and not rules.get("fg_miss"):
         rules["fg_miss"] = sum(miss_vals) / len(miss_vals)
 
+    # Team defense: start from all-zero tiers and fill in what the league scores.
+    by_id = {int(it.get("statId")): float(it.get("points", 0) or 0) for it in items}
+    dst = {k: by_id.get(sid, 0.0) for k, sid in DST_IDS.items()}
+    dst["td"] = max([by_id.get(s, 0.0) for s in DST_TD_IDS] + [0.0])
+    dst["pa_tiers"] = [[lo, hi, by_id.get(sid, 0.0)] for sid, (lo, hi) in DST_PA_IDS.items()]
+    dst["ya_tiers"] = [[lo, hi, by_id.get(sid, 0.0)] for sid, (lo, hi) in DST_YA_IDS.items()]
+    known_dst = set(DST_IDS.values()) | set(DST_TD_IDS) | set(DST_PA_IDS) | set(DST_YA_IDS)
+    unmapped_stats = [u for u in unmapped_stats if u["stat_id"] not in known_dst]
+
     return {
         "league": {"preset": "espn", "label": f"ESPN: {settings.get('name', 'league')}",
                    "teams": int(settings.get("size") or 12), "slots": slots},
         "scoring": {"preset": "espn", "label": "ESPN league scoring", "rules": rules,
-                    "te_rec_bonus": round(te_bonus, 2)},
+                    "te_rec_bonus": round(te_bonus, 2), "dst": dst},
         "unmapped": {"slots": unmapped_slots, "stats": unmapped_stats},
     }
