@@ -35,6 +35,12 @@ export function TeamOddsCard({ o, label }: { o: TeamOdds; label: string }) {
           {o.avg_wins_before.toFixed(1)} <span className="muted">→</span> <b>{o.avg_wins_after.toFixed(1)}</b>
         </dd>
       </dl>
+      {o.must_drop && o.must_drop.length > 0 && (
+        <p className="small muted" style={{ marginTop: 8 }}>
+          Receives more players than it sends, so it would need to drop {o.must_drop.map((p) => p.name).join(" and ")}{" "}
+          (its least valuable player{o.must_drop.length > 1 ? "s" : ""}). Odds include that.
+        </p>
+      )}
     </div>
   );
 }

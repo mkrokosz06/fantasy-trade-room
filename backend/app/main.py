@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import advisor, config, stats, trade
+from . import advisor, config, stats, tracking, trade
 from .data import espn
 from .data.cache import clear_cache
 from .data.store import get_store
@@ -74,6 +74,10 @@ class Ctx:
         if self._signals is None:
             self._signals = advisor.signals(self.season_table(self.store.season), self.values,
                                             self.store.players)
+            try:  # save this week's calls once, to grade them later
+                tracking.snapshot(self._signals, self.store.season, self.store.last_stats_week, self.engine)
+            except OSError:
+                pass
         return self._signals
 
     @property
@@ -292,6 +296,19 @@ def advice(pos: str | None = None, call: str | None = None, engine: str = "v1"):
             "injury_status", "headshot", "games"]
     cols += [col for col in ("floor_ppg", "ceiling_ppg") if col in df.columns]
     return records(df.reset_index()[cols])
+
+
+@app.get("/api/advice/backtest")
+def advice_backtest():
+    c = ctx("v1")
+    return tracking.backtest_advisor(c.store, c.settings["scoring"])
+
+
+@app.get("/api/advice/track")
+def advice_track(engine: str = "v1"):
+    c = ctx(engine)
+    _ = c.signals  # make sure this week's snapshot exists
+    return tracking.grade(c.store, c.settings["scoring"], engine)
 
 
 # ---------------------------------------------------------------- ML model

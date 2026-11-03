@@ -189,9 +189,26 @@ class LeagueContext:
         owners = {self.owner_of.get(i) for i in ids}
         return owners.pop() if len(owners) == 1 and None not in owners else None
 
+    def _fit_roster(self, team: str, roster: list[str], received: list[str]) -> tuple[list[str], list[str]]:
+        """A team that receives more players than it sends must drop to stay at
+        its roster size: it cuts its least valuable players (never IR-slot
+        players or the players it just received)."""
+        limit = len(self.rosters[team])
+        extra = len(roster) - limit
+        if extra <= 0:
+            return roster, []
+        vals = self.c.values["value"]
+        on_ir = {p["id"] for p in self.teams[team]["roster"] if p.get("slot") == "IR"}
+        cuttable = sorted([p for p in roster if p not in on_ir and p not in received],
+                          key=lambda p: float(vals.get(p, 0.0)))
+        drops = cuttable[:extra]
+        return [p for p in roster if p not in drops], drops
+
     def trade_odds(self, team_a: str, team_b: str, gives_a: list[str], gives_b: list[str]) -> dict:
         ra = [p for p in self.rosters[team_a] if p not in gives_a] + list(gives_b)
         rb = [p for p in self.rosters[team_b] if p not in gives_b] + list(gives_a)
+        ra, drops_a = self._fit_roster(team_a, ra, gives_b)
+        rb, drops_b = self._fit_roster(team_b, rb, gives_a)
         after = self.sim.run({team_a: ra, team_b: rb})
         res = {}
         for side, t in (("a", team_a), ("b", team_b)):
@@ -202,6 +219,8 @@ class LeagueContext:
                          **{f"{k}_after": round(b1[k], 4) for k in ("playoff", "bye", "title", "avg_wins")}}
             res[side]["playoff_delta"] = round(b1["playoff"] - b0["playoff"], 4)
             res[side]["title_delta"] = round(b1["title"] - b0["title"], 4)
+            drops = drops_a if side == "a" else drops_b
+            res[side]["must_drop"] = [{"id": p, "name": self._name(p)} for p in drops]
         return res
 
     def acceptance(self, receiver: str, they_get: list[str], they_give: list[str], odds: dict | None = None) -> dict:

@@ -94,6 +94,7 @@ export default function Advisor() {
         )}
       </div>
       <p className="muted">{TABS.find((t) => t.call === tab)!.blurb}</p>
+      <TrackRecord />
 
       <ErrorBox error={advice.error} />
       {advice.loading && !advice.data && <Loading what="Grading players" />}
@@ -155,6 +156,91 @@ export default function Advisor() {
       </div>
     </div>
   );
+}
+
+interface TrackWeek {
+  week: number;
+  graded: boolean;
+  through_week?: number;
+  n: number;
+  summary?: Record<string, { n: number; hit_rate: number; avg_change: number }>;
+}
+
+function TrackRecord() {
+  const { ep } = useEngine();
+  const t = useApi<{ weeks: TrackWeek[]; tracking_since: number | null }>(ep("/api/advice/track"));
+  const bt = useApi<AdvisorBacktest>("/api/advice/backtest");
+  if (!t.data) return null;
+  const graded = t.data.weeks.filter((w) => w.graded);
+  return (
+    <details className="panel">
+      <summary>
+        <b>Track record</b>{" "}
+        <span className="muted small">
+          {graded.length
+            ? `${graded.length} week${graded.length > 1 ? "s" : ""} of calls graded`
+            : `Saving calls since week ${t.data.tracking_since ?? "–"}; results appear after the next games`}
+        </span>
+      </summary>
+      <div className="stack" style={{ marginTop: 10 }}>
+        <p className="small muted">
+          Every week this page's calls are saved, then graded against what players actually scored afterwards. A buy-low
+          call is right if the player outscored what managers were seeing; sell-high if they scored less; hold if they
+          stayed within 15%.
+        </p>
+        {graded.map((w) => (
+          <div key={w.week} className="small">
+            <b>Calls made after week {w.week}</b> (graded through week {w.through_week}):{" "}
+            {Object.entries(w.summary ?? {}).map(([call, s]) => (
+              <span key={call} style={{ marginRight: 14 }}>
+                <CallBadge call={call as Call} /> {Math.round(s.hit_rate * 100)}% right ({s.n})
+              </span>
+            ))}
+          </div>
+        ))}
+        {bt.data && bt.data.windows.length > 0 && (
+          <div className="stack" style={{ gap: 6 }}>
+            <b className="small">Tested on past seasons</b>
+            <p className="small muted">
+              The same buy/sell/hold logic rerun at past points in {bt.data.seasons.join(" and ")} using only data
+              known then, graded on the rest of that season.
+            </p>
+            <div className="tablewrap">
+              <table>
+                <thead>
+                  <tr><th>Call</th><th className="n">Calls</th><th className="n">Right</th><th className="n" title="Average change in points per game vs what managers were seeing">Avg PPG change after</th></tr>
+                </thead>
+                <tbody>
+                  {Object.entries(bt.data.overall).map(([call, s]) => (
+                    <tr key={call}>
+                      <td><CallBadge call={call as Call} /></td>
+                      <td className="n">{s.n}</td>
+                      <td className="n"><b>{Math.round(s.hit_rate * 100)}%</b></td>
+                      <td className="n">{s.avg_change > 0 ? "+" : ""}{s.avg_change.toFixed(1)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {bt.data.base_rate_up !== null && (
+              <p className="small muted">
+                For comparison, only {Math.round(bt.data.base_rate_up * 100)}% of all graded players scored more than
+                managers were seeing (most cool off from a hot stretch), so buy-low calls beating that is a real edge.
+                Hold is a strict test: within 15% of recent scoring.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+interface AdvisorBacktest {
+  seasons: number[];
+  windows: { season: number; after_week: number }[];
+  overall: Record<string, { n: number; hit_rate: number; avg_change: number }>;
+  base_rate_up: number | null;
 }
 
 interface Pickup {

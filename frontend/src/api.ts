@@ -258,6 +258,7 @@ export interface TeamOdds {
   avg_wins_after: number;
   playoff_delta: number;
   title_delta: number;
+  must_drop?: { id: string; name: string }[];
 }
 export interface Acceptance {
   probability: number;
