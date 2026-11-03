@@ -143,6 +143,77 @@ class LeagueContext:
                          "activity": self.activity.get(tid, {})})
         return sorted(rows, key=lambda r: (-r["playoff"], -r["title"]))
 
+    # ------------------------------------------------------------ start / sit
+    def lineup_advice(self, my_team: str) -> dict:
+        """Best lineup for my next matchup, chosen to maximize the chance of
+        beating that week's actual opponent (not just projected points)."""
+        from math import erf, sqrt
+
+        from ..settings_store import SLOT_ELIGIBILITY
+        from ..values import ordered_slots
+
+        sim = self.sim
+        week = sim.current + 1 if sim.in_progress else sim.current
+        game = next((g for g in self.league["schedule"] if g["period"] == week
+                     and my_team in (g["home"], g["away"])), None)
+        if week > sim.reg_weeks or game is None or not game.get("away"):
+            return {"week": week, "bye": game is not None, "message": "No regular-season matchup to set a lineup for."}
+        opp = game["away"] if game["home"] == my_team else game["home"]
+        wkp = sim.wk.get(week, {})
+        on_ir = {p["id"] for p in self.teams[my_team]["roster"] if p.get("slot") == "IR"}
+        mine = [p for p in self.rosters[my_team] if p in wkp and p not in on_ir]
+        wi = sim.wix[week]
+        om, osd = sim.team_params(opp, self.rosters[opp])
+        opp_mean, opp_sd = float(om[wi]), float(osd[wi])
+
+        def assign(key):
+            used, slots = set(), []
+            pool = sorted(mine, key=key, reverse=True)
+            for slot, n in ordered_slots(self.c.settings["league"]["slots"]):
+                for _ in range(n):
+                    pick = next((p for p in pool if p not in used and wkp[p][0] in SLOT_ELIGIBILITY[slot]), None)
+                    if pick:
+                        used.add(pick)
+                    slots.append((slot, pick))
+            return slots
+
+        def win_prob(slots):
+            ids = [p for _, p in slots if p]
+            mean = sum(wkp[p][1] for p in ids)
+            var = sum(wkp[p][2] ** 2 for p in ids)
+            if self.c.settings["league"]["slots"].get("DST") and not any(wkp[p][0] == "DST" for p in ids):
+                mean += sim.dst_fill[0]
+                var += sim.dst_fill[1] ** 2
+            z = (mean - opp_mean) / sqrt(var + opp_sd ** 2 + 1e-9)
+            return 0.5 * (1 + erf(z / sqrt(2))), mean
+
+        strategies = {
+            "Highest projection": assign(lambda p: wkp[p][1]),
+            "Upside (high ceilings)": assign(lambda p: wkp[p][1] + 0.8 * wkp[p][2]),
+            "Safe (high floors)": assign(lambda p: wkp[p][1] - 0.8 * wkp[p][2]),
+        }
+        scored = {k: (*win_prob(v), v) for k, v in strategies.items()}
+        best = max(scored, key=lambda k: scored[k][0])
+        current = {p["id"] for p in self.teams[my_team]["roster"] if p.get("slot") not in ("BENCH", "IR")}
+        lineup = []
+        for slot, pid in scored[best][2]:
+            if pid is None:
+                lineup.append({"slot": slot, "id": None, "name": "Empty"})
+                continue
+            pos, pts, sd = wkp[pid]
+            lineup.append({"slot": slot, "id": pid, "name": self._name(pid), "position": pos,
+                           "pts": round(pts, 1), "floor": round(max(pts - 1.28 * sd, 0), 1),
+                           "ceiling": round(pts + 1.28 * sd, 1), "starting_now": pid in current})
+        starters = {x["id"] for x in lineup if x["id"]}
+        bench = [{"id": p, "name": self._name(p), "position": wkp[p][0], "pts": round(wkp[p][1], 1)}
+                 for p in sorted(mine, key=lambda p: -wkp[p][1]) if p not in starters]
+        return {
+            "week": week, "opponent": self.teams[opp]["name"], "opponent_proj": round(opp_mean, 1),
+            "strategy": best, "lineup": lineup, "bench": bench,
+            "options": [{"strategy": k, "win_prob": round(v[0], 3), "proj": round(v[1], 1)} for k, v in scored.items()],
+            "changes": [x["name"] for x in lineup if x["id"] and not x["starting_now"]],
+        }
+
     # ------------------------------------------------------------ waiver wire
     def free_agents(self) -> list[str]:
         if self.espn.empty or "status" not in self.espn.columns:

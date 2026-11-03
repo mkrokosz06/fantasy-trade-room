@@ -73,6 +73,7 @@ export default function Advisor() {
         </div>
       </div>
 
+      {myTeam && <LineupHelper />}
       {myTeam && <TradeIdeas teamName={myTeam.name} />}
       {myTeam && <WaiverPickups />}
 
@@ -155,6 +156,90 @@ export default function Advisor() {
         {advice.data && !rows.length && <div className="empty">No players match these filters.</div>}
       </div>
     </div>
+  );
+}
+
+interface LineupAdvice {
+  week: number;
+  message?: string;
+  opponent?: string;
+  opponent_proj?: number;
+  strategy?: string;
+  options?: { strategy: string; win_prob: number; proj: number }[];
+  lineup?: { slot: string; id: string | null; name: string; position?: string; pts?: number; floor?: number; ceiling?: number; starting_now?: boolean }[];
+  bench?: { id: string; name: string; position: string; pts: number }[];
+  changes?: string[];
+}
+
+const SLOT_SHORT: Record<string, string> = { FLEX: "FLEX", SFLEX: "SFLX", WRRB: "RB/WR", WRTE: "WR/TE" };
+
+function LineupHelper() {
+  const { ep } = useEngine();
+  const d = useApi<LineupAdvice>(ep("/api/league/lineup"));
+  if (d.error) return <ErrorBox error={d.error} />;
+  if (!d.data) return <div className="panel muted small">Setting your lineup…</div>;
+  const a = d.data;
+  if (a.message) return null;
+  const best = a.options?.find((o) => o.strategy === a.strategy);
+  return (
+    <section className="panel stack">
+      <div className="side-head">
+        <div>
+          <h2>Week {a.week} lineup vs {a.opponent}</h2>
+          <p className="small muted">
+            Picks the lineup with the best chance to beat this opponent, not just the most projected points.
+            Underdogs gain from high-ceiling players, favorites from safe ones.
+          </p>
+        </div>
+        {best && (
+          <div className="stat" style={{ textAlign: "right" }}>
+            <b>{Math.round(best.win_prob * 100)}%</b>
+            <span>win chance ({best.proj} vs {a.opponent_proj})</span>
+          </div>
+        )}
+      </div>
+      <div className="grid2">
+        <div className="tablewrap">
+          <table>
+            <thead><tr><th>Slot</th><th>Start</th><th className="n">Proj</th><th className="n">Range</th></tr></thead>
+            <tbody>
+              {a.lineup?.map((x, i) => (
+                <tr key={i}>
+                  <td className="pos">{SLOT_SHORT[x.slot] ?? x.slot}</td>
+                  <td>
+                    {x.name} {x.position && <span className="pos">{x.position}</span>}
+                    {x.id && !x.starting_now && <span className="badge buy" style={{ marginLeft: 6 }}>start</span>}
+                  </td>
+                  <td className="n"><b>{fmt(x.pts)}</b></td>
+                  <td className="n muted">{x.id ? `${fmt(x.floor)}–${fmt(x.ceiling)}` : "–"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="stack" style={{ gap: 10 }}>
+          <div>
+            <b className="small">Strategies compared</b>
+            <ul className="small" style={{ margin: "4px 0", paddingLeft: 18 }}>
+              {a.options?.map((o) => (
+                <li key={o.strategy}>
+                  {o.strategy}: {Math.round(o.win_prob * 100)}% to win, {o.proj} projected
+                  {o.strategy === a.strategy && <b> (picked)</b>}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <b className="small">Bench</b>
+            <p className="small muted">{a.bench?.map((b) => `${b.name} (${fmt(b.pts)})`).join(", ") || "–"}</p>
+          </div>
+          <p className="small muted">
+            "Start" marks players who aren't in your current ESPN lineup. Set your lineup in the ESPN app; this page
+            can't change it for you.
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }
 

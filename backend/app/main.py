@@ -407,6 +407,18 @@ def league_waivers(team_id: str | None = None, engine: str = "v1"):
     return {"team_id": team_id, "options": opts, "free_agents_checked": len(L.free_agents())}
 
 
+@app.get("/api/league/lineup")
+def league_lineup(team_id: str | None = None, engine: str = "v1"):
+    c = ctx(engine)
+    team_id = team_id or c.settings["espn"].get("my_team_id")
+    if not team_id:
+        raise HTTPException(400, "Pick your team on the League page first.")
+    L = league_ctx(c)
+    if team_id not in L.rosters:
+        raise HTTPException(404, f"Team {team_id} not in league.")
+    return L.lineup_advice(team_id)
+
+
 @app.get("/api/league/history")
 def league_history(engine: str | None = None):
     c = ctx(engine or _best_engine())
