@@ -95,6 +95,8 @@ export interface RankedPlayer {
   ceiling_ppg?: number;
   next_floor?: number;
   next_ceiling?: number;
+  playoff_sos?: number | null;
+  playoff_pts?: number | null;
 }
 
 export interface Advice {
@@ -119,6 +121,7 @@ export interface Advice {
   games: number;
   floor_ppg?: number;
   ceiling_ppg?: number;
+  espn_ppg?: number | null;
 }
 
 export interface Meta {

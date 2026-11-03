@@ -56,6 +56,8 @@ def signals(season_tbl: pd.DataFrame, values: pd.DataFrame, players: pd.DataFram
 
     df["sos_rank"] = df.groupby("position")["sos"].rank(ascending=False, method="min").astype(int)
     n_pos = df.groupby("position")["sos"].transform("size")
+    if "playoff_sos" in df.columns:
+        df["po_rank"] = df.groupby("position")["playoff_sos"].rank(ascending=False, method="min")
 
     # Projections regress everyone toward average, so raw edges skew negative.
     # Remove that position-wide bias, then let the recent usage trend (which the
@@ -89,6 +91,12 @@ def signals(season_tbl: pd.DataFrame, values: pd.DataFrame, players: pd.DataFram
             why.append(f"Remaining schedule is {_ordinal(int(r['sos_rank']))} easiest among graded {r['position']}s")
         elif r["sos_rank"] > n - max(3, n // 8):
             why.append(f"Remaining schedule is among the toughest for {r['position']}s")
+        po = r.get("po_rank")
+        if pd.notna(po) and pd.notna(r.get("playoff_sos")):
+            if po <= max(3, n // 8):
+                why.append("Easy matchups in the fantasy playoffs (weeks 15-17): extra valuable to contenders")
+            elif po > n - max(3, n // 8):
+                why.append("Tough matchups in the fantasy playoffs (weeks 15-17)")
         inj = r["injury_status"] if isinstance(r["injury_status"], str) else None
         if inj:
             why.append(f"Injury: {inj}. Projection already discounts missed games")

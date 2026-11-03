@@ -140,6 +140,12 @@ export default function Advisor() {
                 <b>{fmt(r.proj_ppg)}</b>
                 <span>Projected</span>
               </div>
+              {r.espn_ppg !== undefined && r.espn_ppg !== null && (
+                <div className="stat" title="ESPN's rest-of-season projection: what your leaguemates see in the app">
+                  <b>{fmt(r.espn_ppg)}</b>
+                  <span>ESPN proj</span>
+                </div>
+              )}
               {r.floor_ppg !== undefined && (
                 <div className="stat">
                   <b><Range floor={r.floor_ppg} ceiling={r.ceiling_ppg} /></b>

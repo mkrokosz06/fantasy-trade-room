@@ -30,6 +30,22 @@ app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http
                    allow_methods=["*"], allow_headers=["*"])
 
 
+@app.on_event("startup")
+def _warm_up():
+    """Build projections, model predictions and league odds in the background at
+    startup, so the first page load isn't the slow one."""
+    def run():
+        for engine in ("v1", "ml"):
+            try:
+                c = ctx(engine)
+                _ = c.signals
+                if c.settings["espn"].get("league_id") or config.ESPN_LEAGUE_ID:
+                    league_ctx(c)
+            except Exception:  # noqa: BLE001 - warm-up is best effort (e.g. model not trained)
+                continue
+    threading.Thread(target=run, daemon=True, name="warm-up").start()
+
+
 def records(df: pd.DataFrame) -> list[dict]:
     if df is None or df.empty:
         return []
@@ -295,7 +311,12 @@ def advice(pos: str | None = None, call: str | None = None, engine: str = "v1"):
             "td_gap", "usage_trend", "sos", "sos_rank", "value", "perceived_value",
             "injury_status", "headshot", "games"]
     cols += [col for col in ("floor_ppg", "ceiling_ppg") if col in df.columns]
-    return records(df.reset_index()[cols])
+    out = df.reset_index()[cols]
+    # What leaguemates see: ESPN's own rest-of-season projection per game.
+    L = _league_ctx_or_none(c)
+    if L is not None and not L.espn.empty and "espn_ros_avg" in L.espn.columns:
+        out["espn_ppg"] = out["id"].map(L.espn["espn_ros_avg"]).round(2)
+    return records(out)
 
 
 @app.get("/api/advice/backtest")

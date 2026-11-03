@@ -285,6 +285,10 @@ def compute(store: DataStore, settings: dict,
     summ["next_matchup"] = nxt["matchup"].round(3)
     # Schedule strength: avg matchup factor of remaining games (>1 = easier)
     summ["sos"] = weekly.groupby("id")["matchup"].mean().round(3)
+    # Same, for the fantasy playoffs only (weeks 15-17)
+    po = weekly[weekly["week"] >= 15]
+    summ["playoff_sos"] = po.groupby("id")["matchup"].mean().round(3)
+    summ["playoff_pts"] = po.groupby("id")["pts"].sum().round(1)
     if mp is not None:
         healthy = weekly[weekly["avail"] > 0]
         summ["floor_ppg"] = healthy.groupby("id")["floor"].mean().round(2)

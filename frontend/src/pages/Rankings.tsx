@@ -50,6 +50,7 @@ export default function Rankings() {
     { key: "gl", label: "Games left", num: true, sort: (r) => r.games_left, render: (r) => r.games_left },
     { key: "next", label: "Next", sort: (r) => r.next_opp, render: (r) => r.next_opp ? `W${r.next_week} ${r.next_opp}` : "–" },
     { key: "np", label: "Next pts", num: true, sort: (r) => r.next_pts, render: (r) => fmt(r.next_pts) },
+    { key: "po", label: "Playoff wks", num: true, title: "Opponent factor for weeks 15-17, the fantasy playoffs. Above 1 is easier.", sort: (r) => r.playoff_sos ?? null, render: (r) => <span style={{ color: (r.playoff_sos ?? 1) > 1.04 ? "var(--good)" : (r.playoff_sos ?? 1) < 0.96 ? "var(--bad)" : undefined }}>{fmt(r.playoff_sos, 2)}</span> },
     { key: "sos", label: "Schedule", num: true, title: "Average opponent factor for remaining games. Above 1 is easier.", sort: (r) => r.sos, render: (r) => <span style={{ color: r.sos > 1.03 ? "var(--good)" : r.sos < 0.97 ? "var(--bad)" : undefined }}>{fmt(r.sos, 2)}</span> },
   ];
 
