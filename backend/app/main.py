@@ -373,6 +373,23 @@ def league_odds(engine: str | None = None):
                                    "completed": len(L.history)}}
 
 
+@app.get("/api/league/waivers")
+def league_waivers(team_id: str | None = None, engine: str = "v1"):
+    c = ctx(engine)
+    team_id = team_id or c.settings["espn"].get("my_team_id")
+    if not team_id:
+        raise HTTPException(400, "Pick your team on the League page first.")
+    L = league_ctx(c)
+    if team_id not in L.rosters:
+        raise HTTPException(404, f"Team {team_id} not in league.")
+    opts = L.waiver_options(team_id, c.evaluator)
+    for o in opts:
+        o["add"] = {**_player_info(c, o["add"]), "headshot": c.store.players["headshot"].get(o["add"]),
+                    "proj_ppg": float(c.values["proj_ppg"].get(o["add"], 0.0))}
+        o["drop"] = {**_player_info(c, o["drop"]), "proj_ppg": float(c.values["proj_ppg"].get(o["drop"], 0.0))}
+    return {"team_id": team_id, "options": opts, "free_agents_checked": len(L.free_agents())}
+
+
 @app.get("/api/league/history")
 def league_history(engine: str | None = None):
     c = ctx(engine or _best_engine())

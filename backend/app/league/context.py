@@ -143,6 +143,47 @@ class LeagueContext:
                          "activity": self.activity.get(tid, {})})
         return sorted(rows, key=lambda r: (-r["playoff"], -r["title"]))
 
+    # ------------------------------------------------------------ waiver wire
+    def free_agents(self) -> list[str]:
+        if self.espn.empty or "status" not in self.espn.columns:
+            return []
+        fa = self.espn[self.espn["status"].isin(["FREEAGENT", "WAIVERS"])]
+        return [p for p in fa.index if p not in self.owner_of]
+
+    def waiver_options(self, my_team: str, evaluator, top: int = 40, keep: int = 12) -> list[dict]:
+        """Best free-agent pickups for my team: add the free agent, drop whichever
+        of my lowest-value players hurts least, and simulate the season."""
+        vals = self.c.values["value"]
+        roster = self.rosters[my_team]
+        base = evaluator.total(roster)
+        # Players in an IR slot don't use a roster spot, so they're never the drop.
+        on_ir = {p["id"] for p in self.teams[my_team]["roster"] if p.get("slot") == "IR"}
+        droppable = sorted([p for p in roster if p not in on_ir], key=lambda p: float(vals.get(p, 0.0)))[:4]
+        fas = sorted(self.free_agents(), key=lambda p: -float(vals.get(p, 0.0)))[:top]
+        cands = []
+        for fa in fas:
+            best = None
+            for d in droppable:
+                gain = evaluator.total([p for p in roster if p != d] + [fa]) - base
+                if best is None or gain > best[1]:
+                    best = (d, gain)
+            if best and best[1] > 0.5:
+                cands.append((fa, best[0], best[1]))
+        cands.sort(key=lambda x: -x[2])
+        out = []
+        for fa, drop, gain in cands[:keep]:
+            after = self.sim.run({my_team: [p for p in roster if p != drop] + [fa]})[my_team]
+            before = self.odds[my_team]
+            e = self.espn.loc[fa] if fa in self.espn.index else None
+            out.append({"add": fa, "drop": drop, "lineup_gain": round(gain, 1),
+                        "playoff_before": before["playoff"], "playoff_after": after["playoff"],
+                        "title_before": before["title"], "title_after": after["title"],
+                        "status": None if e is None else e.get("status"),
+                        "pct_owned": None if e is None else e.get("pct_owned")})
+        out.sort(key=lambda r: -((r["playoff_after"] - r["playoff_before"]) + 2 * (r["title_after"] - r["title_before"])
+                                 + r["lineup_gain"] / 1000))
+        return out
+
     # ------------------------------------------------------------ trades
     def team_of(self, ids: list[str]) -> str | None:
         owners = {self.owner_of.get(i) for i in ids}

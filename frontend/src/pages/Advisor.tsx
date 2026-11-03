@@ -74,6 +74,7 @@ export default function Advisor() {
       </div>
 
       {myTeam && <TradeIdeas teamName={myTeam.name} />}
+      {myTeam && <WaiverPickups />}
 
       <div className="row">
         <div className="seg" role="tablist" aria-label="Recommendation">
@@ -153,6 +154,99 @@ export default function Advisor() {
         {advice.data && !rows.length && <div className="empty">No players match these filters.</div>}
       </div>
     </div>
+  );
+}
+
+interface Pickup {
+  add: { id: string; name: string; position: string; team: string; value: number; proj_ppg: number; headshot: string | null };
+  drop: { id: string; name: string; position: string; value: number; proj_ppg: number };
+  lineup_gain: number;
+  playoff_before: number;
+  playoff_after: number;
+  title_before: number;
+  title_after: number;
+  status: string | null;
+  pct_owned: number | null;
+}
+
+function WaiverPickups() {
+  const { ep, base } = useEngine();
+  const [rows, setRows] = useState<Pickup[] | null>(null);
+  const [checked, setChecked] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api<{ options: Pickup[]; free_agents_checked: number }>(ep("/api/league/waivers"));
+      setRows(r.options);
+      setChecked(r.free_agents_checked);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="panel stack">
+      <div className="side-head">
+        <div>
+          <h2>Waiver pickups</h2>
+          <p className="small muted">
+            Sometimes the best trade is free. Checks every available player in your league against your roster, picks
+            the drop that hurts least (never your IR slot), and simulates the season with the pickup.
+          </p>
+        </div>
+        <button className="btn ghost" onClick={run} disabled={busy}>
+          {busy ? "Checking waivers…" : rows ? "Check again" : "Find pickups"}
+        </button>
+      </div>
+      <ErrorBox error={error} />
+      {rows && !rows.length && <div className="empty">No available player would improve your lineup right now.</div>}
+      {rows && rows.length > 0 && (
+        <>
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Add</th>
+                  <th>Drop</th>
+                  <th className="n" title="Projected PPG rest of season">Proj PPG</th>
+                  <th className="n" title="Change in your projected starting lineup, rest of season">Lineup gain</th>
+                  <th className="n">Your playoff odds</th>
+                  <th className="n">Your title odds</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.add.id}>
+                    <td>
+                      <span className="player-cell">
+                        <Headshot src={r.add.headshot} />
+                        <Link to={`${base}/player/${encodeURIComponent(r.add.id)}`}>{r.add.name}</Link>
+                        <span className="pos">{r.add.position} {r.add.team}</span>
+                      </span>
+                    </td>
+                    <td>{r.drop.name} <span className="pos">{r.drop.position}</span></td>
+                    <td className="n">{fmt(r.add.proj_ppg)} <span className="muted small">vs {fmt(r.drop.proj_ppg)}</span></td>
+                    <td className="n delta up">+{fmt(r.lineup_gain)}</td>
+                    <td className="n"><OddsChange before={r.playoff_before} after={r.playoff_after} /></td>
+                    <td className="n"><OddsChange before={r.title_before} after={r.title_after} /></td>
+                    <td className="small">
+                      {r.status === "WAIVERS" ? "On waivers" : "Free agent"}
+                      {r.pct_owned !== null && <div className="muted">{Math.round(r.pct_owned)}% owned on ESPN</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="small muted">{checked} available players checked.</p>
+        </>
+      )}
+    </section>
   );
 }
 
