@@ -4,7 +4,7 @@ import {
   api, fmt, useApi, type Acceptance, type Call, type League, type Meta, type RankedPlayer, type Settings,
   type TeamOdds,
 } from "../api";
-import { AcceptanceBox, TeamOddsCard } from "../components/OddsBits";
+import { AcceptanceBox, OddsChange, TeamOddsCard } from "../components/OddsBits";
 import { CallBadge, ErrorBox, Headshot } from "../components/bits";
 import { GameLog } from "../components/GameLog";
 import { PlayerSearch, type SearchItem } from "../components/PlayerSearch";
@@ -224,6 +224,16 @@ export default function Trade() {
         {sidePanel(nameB, b, setB, teamB, setTeamB, result?.side_b.gives)}
       </div>
 
+      {league.data?.my_team_id && b.length > 0 && a.length === 0 && (
+        <OfferBuilder
+          target={b}
+          onUse={(ids) => {
+            setTeamA(league.data!.my_team_id!);
+            setA(ids);
+          }}
+        />
+      )}
+
       {result && v ? (
         <section className="panel stack">
           <YardField aLabel={nameA} bLabel={nameB} aGets={result.side_a.receives_value} bGets={result.side_b.receives_value} />
@@ -295,6 +305,82 @@ export default function Trade() {
         <div className="empty">Add at least one player to each side to see who wins the trade.</div>
       )}
     </div>
+  );
+}
+
+interface Offer {
+  give: { id: string; name: string; position: string; value: number }[];
+  odds: { a: TeamOdds; b: TeamOdds };
+  acceptance: Acceptance;
+}
+
+function OfferBuilder({ target, onUse }: { target: string[]; onUse: (ids: string[]) => void }) {
+  const { ep } = useEngine();
+  const [res, setRes] = useState<{ offers: Offer[]; owner_name?: string; message?: string; checked?: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setRes(await api(ep("/api/league/offer"), { method: "POST", body: JSON.stringify({ target }) }));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="panel stack">
+      <div className="side-head">
+        <div>
+          <h3>What should you offer?</h3>
+          <p className="small muted">
+            Tries every one- and two-player package from your roster, simulates each, and suggests the offers the other
+            manager is most likely to accept without hurting your season.
+          </p>
+        </div>
+        <button className="btn" onClick={run} disabled={busy}>
+          {busy ? "Building offers…" : res ? "Try again" : "Suggest offers"}
+        </button>
+      </div>
+      <ErrorBox error={error || res?.message || null} />
+      {res && res.offers.length === 0 && !res.message && (
+        <div className="empty">No package from your roster gets this done without hurting your season.</div>
+      )}
+      {res && res.offers.length > 0 && (
+        <div className="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Offer {res.owner_name}</th>
+                <th className="n">Your playoff odds</th>
+                <th className="n">Your title odds</th>
+                <th>How it looks to them</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {res.offers.map((o, i) => {
+                const cls = o.acceptance.label === "Strong offer" ? "buy" : o.acceptance.label === "Long shot" ? "sell" : "hold";
+                return (
+                  <tr key={i}>
+                    <td>{o.give.map((p) => <div key={p.id}>{p.name} <span className="pos">{p.position}</span></div>)}</td>
+                    <td className="n"><OddsChange before={o.odds.a.playoff_before} after={o.odds.a.playoff_after} /></td>
+                    <td className="n"><OddsChange before={o.odds.a.title_before} after={o.odds.a.title_after} /></td>
+                    <td className="small" title={o.acceptance.reasons.join("\n")}>
+                      <span className={`badge ${cls}`}>{o.acceptance.label}</span>{" "}
+                      <span className="muted">~{Math.round(o.acceptance.probability * 100)}%</span>
+                    </td>
+                    <td><button className="btn ghost small" onClick={() => onUse(o.give.map((p) => p.id))}>Use this offer</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 

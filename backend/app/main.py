@@ -440,6 +440,23 @@ def league_lineup(team_id: str | None = None, engine: str = "v1"):
     return L.lineup_advice(team_id)
 
 
+class OfferIn(BaseModel):
+    target: list[str]
+
+
+@app.post("/api/league/offer")
+def league_offer(body: OfferIn, engine: str = "v1", team_id: str | None = None):
+    c = ctx(engine)
+    team_id = team_id or c.settings["espn"].get("my_team_id")
+    if not team_id:
+        raise HTTPException(400, "Pick your team on the League page first.")
+    L = league_ctx(c)
+    res = finder.build_offer(L, team_id, body.target)
+    for o in res.get("offers", []):
+        o["give"] = [_player_info(c, p) for p in o["give"]]
+    return res
+
+
 @app.get("/api/league/history")
 def league_history(engine: str | None = None):
     c = ctx(engine or _best_engine())

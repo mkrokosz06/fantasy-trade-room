@@ -20,6 +20,38 @@ from .context import LeagueContext
 MAX_SIMULATED = 120
 
 
+def build_offer(L: LeagueContext, my_team: str, target: list[str], max_results: int = 8) -> dict:
+    """I want these player(s): which packages from my roster should I offer?
+
+    Tries every 1- and 2-player package from my 14 most valuable players,
+    simulates each, and ranks by how appealing it is to the other manager,
+    keeping only offers that don't hurt my season (or barely do).
+    """
+    owner = L.team_of(target)
+    if owner is None or owner == my_team:
+        return {"owner": owner, "offers": [], "message": "Pick players who are all on one other team."}
+    vals = L.c.values["value"]
+    on_ir = {p["id"] for p in L.teams[my_team]["roster"] if p.get("slot") == "IR"}
+    mine = sorted([p for p in L.rosters[my_team] if p in vals.index and p not in on_ir],
+                  key=lambda p: -float(vals.get(p, 0.0)))[:14]
+    want = side_value([L.perceived_value(p) for p in target])
+    packages = [(a,) for a in mine] + list(itertools.combinations(mine, 2))
+    # Skip packages that are nowhere near the target's value in the other manager's eyes.
+    packages = [pk for pk in packages if side_value([L.perceived_value(p) for p in pk]) >= 0.6 * want]
+    offers = []
+    for pk in packages[:90]:
+        odds = L.trade_odds(my_team, owner, list(pk), target)
+        mine_d = odds["a"]["playoff_delta"] + 2 * odds["a"]["title_delta"]
+        if mine_d < -0.01:
+            continue
+        acc = L.acceptance(owner, they_get=list(pk), they_give=target, odds=odds["b"])
+        offers.append({"give": list(pk), "odds": odds, "acceptance": acc,
+                       "score": round(acc["appeal"] + 3 * mine_d, 4)})
+    offers.sort(key=lambda o: -o["score"])
+    return {"owner": owner, "owner_name": L.teams[owner]["name"], "offers": offers[:max_results],
+            "checked": len(packages)}
+
+
 def find(L: LeagueContext, my_team: str, evaluator: LineupEvaluator, max_results: int = 25) -> list[dict]:
     vals = L.c.values["value"]
 
