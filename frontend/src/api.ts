@@ -137,7 +137,16 @@ export interface Meta {
 }
 
 export interface Settings {
-  scoring: { preset: string; label: string; rules: Record<string, number>; te_rec_bonus: number };
+  scoring: {
+    preset: string;
+    label: string;
+    rules: Record<string, number>;
+    te_rec_bonus: number;
+    dst?: {
+      sack: number; int: number; fum_rec: number; safety: number; blk_kick: number; td: number;
+      pa_tiers: [number, number, number][]; ya_tiers: [number, number, number][];
+    };
+  };
   league: { preset: string; label: string; teams: number; slots: Record<string, number> };
   projection: { sleeper_blend: number; end_week: number; half_life_games: number };
   espn: { league_id: string; my_team_id: string };

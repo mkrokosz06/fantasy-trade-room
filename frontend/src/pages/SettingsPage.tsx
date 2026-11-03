@@ -9,7 +9,30 @@ interface Presets {
   stat_labels: Record<string, string>;
 }
 
-const SLOT_ORDER = ["QB", "RB", "WR", "TE", "FLEX", "WRRB", "WRTE", "SFLEX", "K", "DST", "BENCH"];
+type Tier = [number, number, number];
+interface Dst { sack: number; int: number; fum_rec: number; safety: number; blk_kick: number; td: number; pa_tiers: Tier[]; ya_tiers: Tier[] }
+
+function DstRules({ dst }: { dst?: Dst }) {
+  const tiers = (t: Tier[]) =>
+    t.filter(([, , p]) => p).map(([lo, hi, p]) => `${lo}${hi >= 999 ? "+" : `–${hi}`}: ${p > 0 ? "+" : ""}${p}`).join(", ") || "not scored";
+  return (
+    <details>
+      <summary className="small"><b>Team defense (D/ST) scoring</b></summary>
+      {dst ? (
+        <ul className="small" style={{ margin: "6px 0", paddingLeft: 18 }}>
+          <li>Sack {dst.sack}, interception {dst.int}, fumble recovery {dst.fum_rec}, safety {dst.safety}, blocked kick {dst.blk_kick}</li>
+          <li>Defensive or return TD: {dst.td}</li>
+          <li>Points allowed: {tiers(dst.pa_tiers)}</li>
+          <li>Yards allowed: {tiers(dst.ya_tiers)}</li>
+        </ul>
+      ) : (
+        <p className="small muted">ESPN standard D/ST scoring. Import your ESPN league's settings to use its exact rules.</p>
+      )}
+    </details>
+  );
+}
+
+const SLOT_ORDER =["QB", "RB", "WR", "TE", "FLEX", "WRRB", "WRTE", "SFLEX", "K", "DST", "BENCH"];
 
 export default function SettingsPage() {
   const saved = useApi<Settings>("/api/settings");
@@ -133,6 +156,7 @@ export default function SettingsPage() {
             </table>
           </div>
           <p className="small muted">Yardage is points per yard: 0.04 means 1 point per 25 passing yards.</p>
+          <DstRules dst={s.scoring.dst} />
         </section>
 
         <div className="stack">

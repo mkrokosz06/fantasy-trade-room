@@ -229,17 +229,16 @@ class LeagueContext:
         base = evaluator.total(roster)
         # Players in an IR slot don't use a roster spot, so they're never the drop.
         on_ir = {p["id"] for p in self.teams[my_team]["roster"] if p.get("slot") == "IR"}
-        droppable = sorted([p for p in roster if p not in on_ir], key=lambda p: float(vals.get(p, 0.0)))[:4]
+        droppable = [p for p in roster if p not in on_ir]
         fas = sorted(self.free_agents(), key=lambda p: -float(vals.get(p, 0.0)))[:top]
         cands = []
         for fa in fas:
-            best = None
-            for d in droppable:
-                gain = evaluator.total([p for p in roster if p != d] + [fa]) - base
-                if best is None or gain > best[1]:
-                    best = (d, gain)
-            if best and best[1] > 0.5:
-                cands.append((fa, best[0], best[1]))
+            # Best drop = the one that leaves the strongest lineup with the pickup (ties: lowest value).
+            d = max(droppable, key=lambda x: (evaluator.total([p for p in roster if p != x] + [fa]),
+                                              -float(vals.get(x, 0.0))))
+            gain = evaluator.total([p for p in roster if p != d] + [fa]) - base
+            if gain > 0.5:
+                cands.append((fa, d, gain))
         cands.sort(key=lambda x: -x[2])
         out = []
         for fa, drop, gain in cands[:keep]:
@@ -268,12 +267,24 @@ class LeagueContext:
         extra = len(roster) - limit
         if extra <= 0:
             return roster, []
-        vals = self.c.values["value"]
         on_ir = {p["id"] for p in self.teams[team]["roster"] if p.get("slot") == "IR"}
-        cuttable = sorted([p for p in roster if p not in on_ir and p not in received],
-                          key=lambda p: float(vals.get(p, 0.0)))
-        drops = cuttable[:extra]
-        return [p for p in roster if p not in drops], drops
+        drops = []
+        for _ in range(extra):
+            cut = self.least_costly_cut(roster, protect=on_ir | set(received))
+            if cut is None:
+                break
+            drops.append(cut)
+            roster = [p for p in roster if p != cut]
+        return roster, drops
+
+    def least_costly_cut(self, roster: list[str], protect: set[str]) -> str | None:
+        """The player whose loss hurts the projected starting lineup least (ties:
+        lowest value). Cutting by value alone would happily drop an injured star."""
+        ev, vals = self.c.evaluator, self.c.values["value"]
+        cands = [p for p in roster if p not in protect]
+        if not cands:
+            return None
+        return max(cands, key=lambda p: (ev.total([q for q in roster if q != p]), -float(vals.get(p, 0.0))))
 
     def trade_odds(self, team_a: str, team_b: str, gives_a: list[str], gives_b: list[str]) -> dict:
         ra = [p for p in self.rosters[team_a] if p not in gives_a] + list(gives_b)
