@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, fmt, useApi, type Call, type League, type Meta, type RankedPlayer, type Settings } from "../api";
+import {
+  api, fmt, useApi, type Acceptance, type Call, type League, type Meta, type RankedPlayer, type Settings,
+  type TeamOdds,
+} from "../api";
+import { AcceptanceBox, TeamOddsCard } from "../components/OddsBits";
 import { CallBadge, ErrorBox, Headshot } from "../components/bits";
 import { GameLog } from "../components/GameLog";
 import { PlayerSearch, type SearchItem } from "../components/PlayerSearch";
@@ -27,6 +31,9 @@ interface TradeResult {
     a: { before: number; after: number; delta: number; per_week: number };
     b: { before: number; after: number; delta: number; per_week: number };
   };
+  odds?: { a: TeamOdds; b: TeamOdds };
+  acceptance?: Acceptance;
+  teams?: { a: string; b: string };
 }
 
 export default function Trade() {
@@ -111,8 +118,9 @@ export default function Trade() {
 
   const teamName = (id: string, fallback: string) =>
     league.data?.teams.find((t) => t.team_id === id)?.name || fallback;
-  const nameA = teamName(teamA, "Side A");
-  const nameB = teamName(teamB, "Side B");
+  // Teams can also be detected from whose players are in the trade.
+  const nameA = teamName(teamA || result?.teams?.a || "", "Side A");
+  const nameB = teamName(teamB || result?.teams?.b || "", "Side B");
   const exclude = new Set([...a, ...b]);
   const callOf = (id: string, side: TradePlayer[] | undefined) => side?.find((p) => p.id === id)?.call;
 
@@ -242,6 +250,20 @@ export default function Trade() {
               </>
             )}
           </div>
+          {result.odds && (
+            <div className="stack" style={{ gap: 10 }}>
+              <h3>What it does to each team's season</h3>
+              <div className="odds-grid">
+                <TeamOddsCard o={result.odds.a} label={nameA} />
+                <TeamOddsCard o={result.odds.b} label={nameB} />
+                {result.acceptance && <AcceptanceBox a={result.acceptance} teamName={nameB} />}
+              </div>
+              <p className="small muted">
+                From simulating the rest of the season thousands of times with each team's best weekly lineup,
+                the real remaining schedule and playoff bracket.
+              </p>
+            </div>
+          )}
           <p className="small muted">
             Receiving values include a consolidation adjustment: two good players are worth less than their sum,
             because they cost an extra roster spot and you can only start so many.

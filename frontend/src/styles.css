@@ -249,6 +249,17 @@ td a:hover { text-decoration: underline; }
 /* ---------------------------------------------------------------- matchups */
 .heat td.h { text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; }
 
+/* ---------------------------------------------------------------- odds */
+.odds-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 1000px) { .odds-grid { grid-template-columns: 1fr; } }
+.odds-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--chalk); }
+.odds-card dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 10px 0 0; font-size: 0.9rem; }
+.odds-card dt { color: var(--muted); }
+.odds-card dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.nowrap { white-space: nowrap; }
+.meter { display: inline-block; width: 70px; height: 6px; border-radius: 3px; background: var(--line); vertical-align: middle; margin-right: 8px; overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--turf-soft); }
+
 /* ---------------------------------------------------------------- model lab */
 .range { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bars { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }

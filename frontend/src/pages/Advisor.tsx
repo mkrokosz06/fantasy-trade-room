@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, fmt, useApi, type Advice, type Call, type League, type Settings } from "../api";
+import {
+  api, fmt, odds, useApi, type Acceptance, type Advice, type Call, type League, type Settings, type TeamOdds,
+} from "../api";
+import { OddsChange, SituationBadge } from "../components/OddsBits";
 import { CallBadge, ErrorBox, Headshot, InjuryBadge, Loading, PosFilter, Range } from "../components/bits";
 import { useEngine } from "../engine";
 
@@ -10,6 +13,12 @@ const TABS: { call: Call; label: string; blurb: string }[] = [
   { call: "HOLD", label: "Hold", blurb: "Production matches the projection. Priced fairly, so no edge either way." },
 ];
 
+interface MyOdds {
+  playoff: number;
+  title: number;
+  situation: string;
+}
+
 interface TradeIdea {
   team_id: string;
   team_name: string;
@@ -17,7 +26,8 @@ interface TradeIdea {
   get: { id: string; name: string; position: string; value: number; call: Call | null }[];
   my_gain: number;
   their_gain: number;
-  looks_fair_to_them: boolean;
+  odds: { a: TeamOdds; b: TeamOdds };
+  acceptance: Acceptance;
 }
 
 export default function Advisor() {
@@ -149,6 +159,7 @@ export default function Advisor() {
 function TradeIdeas({ teamName }: { teamName: string }) {
   const { ep, base } = useEngine();
   const [ideas, setIdeas] = useState<TradeIdea[] | null>(null);
+  const [myOdds, setMyOdds] = useState<MyOdds | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -156,8 +167,9 @@ function TradeIdeas({ teamName }: { teamName: string }) {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<{ trades: TradeIdea[] }>(ep("/api/league/trades"));
+      const r = await api<{ trades: TradeIdea[]; my_odds: MyOdds }>(ep("/api/league/trades"));
       setIdeas(r.trades);
+      setMyOdds(r.my_odds);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -171,9 +183,16 @@ function TradeIdeas({ teamName }: { teamName: string }) {
         <div>
           <h2>Trade ideas for {teamName}</h2>
           <p className="small muted">
-            Searches 1-for-1 and 2-for-1 deals with every team, keeping trades that raise your projected starting lineup.
-            Ranked higher when the other team also improves or would see the deal as fair by recent points.
+            Searches 1-for-1 and 2-for-1 deals with every team, simulates the rest of the season before and after each,
+            and ranks them by how much they raise your playoff and title odds, weighted by how appealing the offer
+            looks to the other manager.
           </p>
+          {myOdds && (
+            <p className="small">
+              Right now: <b>{odds(myOdds.playoff)}</b> playoff odds, <b>{odds(myOdds.title)}</b> title odds{" "}
+              <SituationBadge s={myOdds.situation} />
+            </p>
+          )}
         </div>
         <button className="btn" onClick={run} disabled={busy}>
           {busy ? "Searching trades…" : ideas ? "Search again" : "Find trades"}
@@ -189,32 +208,32 @@ function TradeIdeas({ teamName }: { teamName: string }) {
                 <th>You give</th>
                 <th>You get</th>
                 <th>From</th>
-                <th className="n" title="Change in your projected starting-lineup points, rest of season">Your gain</th>
-                <th className="n" title="Change in their projected starting-lineup points">Their change</th>
-                <th>Likely to accept?</th>
+                <th className="n" title="Your chance of making the playoffs, before and after">Your playoff odds</th>
+                <th className="n" title="Your chance of winning the league, before and after">Your title odds</th>
+                <th className="n" title="Change in their playoff odds">Their playoff odds</th>
+                <th title="How the offer looks to them, and an estimated chance they accept">Would they accept?</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {ideas.map((t, i) => (
-                <tr key={i}>
-                  <td>{t.give.map((p) => <div key={p.id}>{p.name} <span className="pos">{p.position}</span> <CallBadge call={p.call} /></div>)}</td>
-                  <td>{t.get.map((p) => <div key={p.id}>{p.name} <span className="pos">{p.position}</span> <CallBadge call={p.call} /></div>)}</td>
-                  <td>{t.team_name}</td>
-                  <td className="n delta up">+{fmt(t.my_gain)}</td>
-                  <td className={`n delta ${t.their_gain > 0.5 ? "up" : t.their_gain < -0.5 ? "down" : ""}`}>
-                    {t.their_gain > 0 ? "+" : ""}
-                    {fmt(t.their_gain)}
-                  </td>
-                  <td className="small">
-                    {t.their_gain > 0 && t.looks_fair_to_them
-                      ? "Good odds: helps both teams"
-                      : t.looks_fair_to_them
-                        ? "Looks fair by recent points"
-                        : t.their_gain > 0
-                          ? "Helps them, but looks uneven"
-                          : "Hard sell"}
-                  </td>
+              {ideas.map((t, i) => {
+                const d = t.odds.b.playoff_delta * 100;
+                const acls = t.acceptance.label === "Strong offer" ? "buy" : t.acceptance.label === "Long shot" ? "sell" : "hold";
+                return (
+                  <tr key={i}>
+                    <td>{t.give.map((p) => <div key={p.id}>{p.name} <span className="pos">{p.position}</span> <CallBadge call={p.call} /></div>)}</td>
+                    <td>{t.get.map((p) => <div key={p.id}>{p.name} <span className="pos">{p.position}</span> <CallBadge call={p.call} /></div>)}</td>
+                    <td>
+                      <div>{t.team_name}</div>
+                      <SituationBadge s={t.odds.b.situation} />
+                    </td>
+                    <td className="n"><OddsChange before={t.odds.a.playoff_before} after={t.odds.a.playoff_after} /></td>
+                    <td className="n"><OddsChange before={t.odds.a.title_before} after={t.odds.a.title_after} /></td>
+                    <td className={`n delta ${d > 0.5 ? "up" : d < -0.5 ? "down" : ""}`}>{d > 0 ? "+" : ""}{fmt(d, 1)} pts</td>
+                    <td className="small" title={t.acceptance.reasons.join("\n")}>
+                      <span className={`badge ${acls}`}>{t.acceptance.label}</span>
+                      <div className="muted">~{Math.round(t.acceptance.probability * 100)}% chance</div>
+                    </td>
                   <td>
                     <Link
                       className="btn ghost small"
@@ -224,7 +243,8 @@ function TradeIdeas({ teamName }: { teamName: string }) {
                     </Link>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

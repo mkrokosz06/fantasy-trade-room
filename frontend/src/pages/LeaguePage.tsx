@@ -1,7 +1,100 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, fmt, invalidateAll, useApi, type League, type Meta, type Settings } from "../api";
+import { api, fmt, invalidateAll, odds, useApi, type League, type LeagueOdds, type Meta, type Settings } from "../api";
 import { CallBadge, ErrorBox, Loading } from "../components/bits";
+import { SituationBadge } from "../components/OddsBits";
+
+interface HistoryTrade {
+  period: number;
+  sides: { team_id: string; team_name: string; pts_since: number; ros_value: number;
+    received: { id: string; name: string; pts_since: number; ros_value: number }[] }[];
+}
+
+function Meter({ p }: { p: number }) {
+  return <span className="meter" aria-hidden="true"><i style={{ width: `${Math.round(p * 100)}%` }} /></span>;
+}
+
+function Standings({ lg }: { lg: League }) {
+  const o = useApi<LeagueOdds>("/api/league/odds");
+  const h = useApi<{ trades: HistoryTrade[] }>("/api/league/history");
+  const lineup = new Map(lg.teams.map((t) => [t.team_id, t.lineup_ros_pts]));
+  if (o.error) return <ErrorBox error={o.error} />;
+  if (!o.data) return <Loading what="Simulating the rest of the season" />;
+  const r = o.data.league_accept_rate;
+  return (
+    <section className="stack">
+      <div>
+        <h2>Standings and odds</h2>
+        <p className="small muted">
+          From {o.data.sims.toLocaleString()} simulations of the rest of the season: each team's best weekly lineup
+          ({o.data.engine === "ml" ? "trained model" : "original engine"} projections with week-to-week swings), the real
+          schedule, then a {o.data.playoffs.teams}-team playoff after week {o.data.playoffs.regular_season_weeks}.
+        </p>
+      </div>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Team</th>
+              <th className="n">Record</th>
+              <th className="n">Points for</th>
+              <th className="n" title="Average final win total across simulations">Proj. wins</th>
+              <th title="Chance of making the playoffs">Playoffs</th>
+              <th className="n" title="Chance of a first-round bye">Bye</th>
+              <th className="n" title="Chance of winning the league">Title</th>
+              <th>Situation</th>
+              <th className="n" title="Trade offers sent / trades completed this season">Trading</th>
+              <th className="n" title="Projected best starting lineup, rest of season">Lineup ROS pts</th>
+            </tr>
+          </thead>
+          <tbody>
+            {o.data.standings.map((t) => (
+              <tr key={t.team_id}>
+                <td>
+                  <b>{t.name}</b>
+                  {t.team_id === lg.my_team_id && <span className="badge hold" style={{ marginLeft: 8 }}>You</span>}
+                  <div className="small muted">{t.owner}</div>
+                </td>
+                <td className="n">{t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ""}</td>
+                <td className="n">{fmt(t.points_for)}</td>
+                <td className="n">{t.avg_wins.toFixed(1)}</td>
+                <td className="nowrap"><Meter p={t.playoff} /><b>{odds(t.playoff)}</b></td>
+                <td className="n">{odds(t.bye)}</td>
+                <td className="n"><b>{odds(t.title)}</b></td>
+                <td><SituationBadge s={t.situation} /></td>
+                <td className="n">{t.activity.proposed} / {t.activity.completed}</td>
+                <td className="n">{fmt(lineup.get(t.team_id), 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <section className="panel stack">
+        <h3>Trade history</h3>
+        <p className="small muted">
+          {r.proposals} trade offers this season, {r.completed} accepted.
+          {r.completed === 0 && " Offers in this league are rarely accepted, so the advisor's acceptance estimates are scaled down to match."}
+        </p>
+        {h.data?.trades.map((t, i) => (
+          <div key={i} className="odds-card">
+            <b>Week {t.period}</b>
+            <div className="grid2" style={{ marginTop: 6 }}>
+              {t.sides.map((s) => (
+                <div key={s.team_id}>
+                  <div><b>{s.team_name}</b> received</div>
+                  <ul className="small" style={{ margin: "4px 0", paddingLeft: 18 }}>
+                    {s.received.map((p) => <li key={p.id}>{p.name}: {fmt(p.pts_since)} pts since</li>)}
+                  </ul>
+                  <div className="small muted">{fmt(s.pts_since)} pts since the trade, {fmt(s.ros_value, 0)} value rest of season</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </section>
+    </section>
+  );
+}
 
 export default function LeaguePage() {
   const settings = useApi<Settings>("/api/settings");
@@ -116,27 +209,7 @@ export default function LeaguePage() {
             )}
           </section>
 
-          <div className="tablewrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Team</th><th>Owner</th><th className="n">Record</th><th className="n">Points for</th>
-                  <th className="n" title="Projected best starting lineup, rest of season">Lineup ROS pts</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...lg.teams].sort((a, b) => b.lineup_ros_pts - a.lineup_ros_pts).map((t) => (
-                  <tr key={t.team_id}>
-                    <td><b>{t.name}</b>{t.team_id === lg.my_team_id && <span className="badge hold" style={{ marginLeft: 8 }}>You</span>}</td>
-                    <td>{t.owner}</td>
-                    <td className="n">{t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ""}</td>
-                    <td className="n">{fmt(t.points_for)}</td>
-                    <td className="n"><b>{fmt(t.lineup_ros_pts, 0)}</b></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Standings lg={lg} />
 
           <div className="grid2">
             {lg.teams.map((t) => (

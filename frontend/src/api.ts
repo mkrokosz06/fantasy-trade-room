@@ -244,6 +244,57 @@ export interface MlStatus {
   };
 }
 
+export interface TeamOdds {
+  team_id: string;
+  team_name: string;
+  situation: string;
+  playoff_before: number;
+  playoff_after: number;
+  title_before: number;
+  title_after: number;
+  bye_before: number;
+  bye_after: number;
+  avg_wins_before: number;
+  avg_wins_after: number;
+  playoff_delta: number;
+  title_delta: number;
+}
+export interface Acceptance {
+  probability: number;
+  appeal: number;
+  label: "Strong offer" | "Fair offer" | "Long shot";
+  reasons: string[];
+  perceived_get: number;
+  perceived_give: number;
+  league_accept_rate: { proposals: number; completed: number };
+}
+export interface Standing {
+  team_id: string;
+  name: string;
+  owner: string;
+  wins: number;
+  losses: number;
+  ties: number;
+  points_for: number;
+  playoff: number;
+  bye: number;
+  title: number;
+  avg_wins: number;
+  avg_seed: number;
+  situation: string;
+  activity: { proposed: number; received: number; declined: number; completed: number };
+}
+export interface LeagueOdds {
+  engine: string;
+  standings: Standing[];
+  playoffs: { regular_season_weeks: number; teams: number };
+  sims: number;
+  league_accept_rate: { proposals: number; completed: number };
+}
+
+export const odds = (p: number | null | undefined) =>
+  p === null || p === undefined ? "–" : p >= 0.995 ? ">99%" : p > 0 && p < 0.005 ? "<1%" : `${Math.round(p * 100)}%`;
+
 // ---------------------------------------------------------------- formatting
 export const fmt = (n: number | null | undefined, d = 1) =>
   n === null || n === undefined || Number.isNaN(n) ? "–" : n.toFixed(d);

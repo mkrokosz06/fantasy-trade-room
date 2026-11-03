@@ -31,13 +31,13 @@ def is_fresh(path: Path, ttl_hours: float) -> bool:
 
 def cached_download(url: str, name: str, ttl_hours: float | None = None,
                     force: bool = False, params: dict | None = None,
-                    cookies: dict | None = None) -> Path:
+                    cookies: dict | None = None, headers: dict | None = None) -> Path:
     path = CACHE_DIR / name
     ttl = CACHE_TTL_HOURS if ttl_hours is None else ttl_hours
     if not force and is_fresh(path, ttl):
         return path
     try:
-        resp = _client.get(url, params=params, cookies=cookies)
+        resp = _client.get(url, params=params, cookies=cookies, headers=headers)
         resp.raise_for_status()
         tmp = path.with_name(path.name + ".tmp")
         tmp.write_bytes(resp.content)
@@ -51,8 +51,8 @@ def cached_download(url: str, name: str, ttl_hours: float | None = None,
 
 def cached_json(url: str, name: str, ttl_hours: float | None = None,
                 force: bool = False, params: dict | None = None,
-                cookies: dict | None = None):
-    path = cached_download(url, name, ttl_hours, force, params, cookies)
+                cookies: dict | None = None, headers: dict | None = None):
+    path = cached_download(url, name, ttl_hours, force, params, cookies, headers)
     return json.loads(path.read_text(encoding="utf-8"))
 
 

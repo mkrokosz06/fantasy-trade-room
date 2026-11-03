@@ -14,6 +14,9 @@ from . import advisor, config, stats, trade
 from .data import espn
 from .data.cache import clear_cache
 from .data.store import get_store
+from .league import finder
+from .league.context import LeagueContext
+from .league.sim import situation
 from .ml import model as ml_model
 from .ml import service as ml_service
 from .projections import RATIOS, get_projections
@@ -240,17 +243,27 @@ class TradeIn(BaseModel):
 @app.post("/api/trade")
 def evaluate_trade(body: TradeIn, engine: str = "v1"):
     c = ctx(engine)
+    L = _league_ctx_or_none(c)
+    team_a, team_b = body.team_a, body.team_b
+    if L is not None:
+        # Work out whose players these are if teams weren't picked.
+        team_a = team_a or L.team_of(body.side_a)
+        team_b = team_b or L.team_of(body.side_b)
     roster_a = roster_b = None
-    if body.team_a and body.team_b:
-        lg = _league(c)
-        rosters = _rosters(lg)
-        roster_a, roster_b = rosters.get(body.team_a), rosters.get(body.team_b)
+    if L is not None and team_a and team_b and team_a != team_b:
+        roster_a, roster_b = L.rosters.get(team_a), L.rosters.get(team_b)
     res = trade.evaluate(c.values, body.side_a, body.side_b, c.evaluator if roster_a else None,
                          roster_a, roster_b)
     for side in ("side_a", "side_b"):
         for p in res[side]["gives"]:
             if p["id"] in c.signals.index:
                 p["call"] = c.signals.at[p["id"], "call"]
+    if roster_a is not None and roster_b is not None:
+        odds = L.trade_odds(team_a, team_b, body.side_a, body.side_b)
+        res["odds"] = odds
+        # Assume side A is proposing: would side B accept?
+        res["acceptance"] = L.acceptance(team_b, they_get=body.side_a, they_give=body.side_b, odds=odds["b"])
+        res["teams"] = {"a": team_a, "b": team_b}
     return res
 
 
@@ -302,6 +315,62 @@ def _rosters(lg: dict) -> dict[str, list[str]]:
     return {t["team_id"]: [p["id"] for p in t["roster"] if p["id"]] for t in lg["teams"]}
 
 
+_lctx: dict[str, tuple] = {}
+_lctx_lock = threading.Lock()
+
+
+def league_ctx(c: Ctx) -> LeagueContext:
+    """League standings/odds/acceptance context, rebuilt when projections or rosters change."""
+    lg = _league(c)
+    league_id = c.settings["espn"].get("league_id") or config.ESPN_LEAGUE_ID
+    key = (id(c), tuple(sorted((k, tuple(v)) for k, v in _rosters(lg).items())),
+           tuple((g["period"], g["winner"]) for g in lg["schedule"]))
+    with _lctx_lock:
+        cached = _lctx.get(c.engine)
+        if cached is None or cached[0] != key:
+            _lctx[c.engine] = (key, LeagueContext(c, lg, league_id))
+        return _lctx[c.engine][1]
+
+
+def _league_ctx_or_none(c: Ctx) -> LeagueContext | None:
+    if not (c.settings["espn"].get("league_id") or config.ESPN_LEAGUE_ID):
+        return None
+    try:
+        return league_ctx(c)
+    except HTTPException:
+        return None
+
+
+def _best_engine() -> str:
+    """League-wide odds use the trained model when it exists (it has weekly ranges)."""
+    return "ml" if ml_model.load_meta() else "v1"
+
+
+def _player_info(c: Ctx, pid: str) -> dict:
+    r = c.values.loc[pid] if pid in c.values.index else None
+    return {"id": pid, "name": r["name"] if r is not None else pid,
+            "position": r["position"] if r is not None else None,
+            "team": r["team"] if r is not None else None,
+            "value": float(r["value"]) if r is not None else 0.0,
+            "call": c.signals.at[pid, "call"] if pid in c.signals.index else None}
+
+
+@app.get("/api/league/odds")
+def league_odds(engine: str | None = None):
+    c = ctx(engine or _best_engine())
+    L = league_ctx(c)
+    return {"engine": c.engine, "standings": L.standings(), "playoffs": L.league["playoffs"],
+            "sims": int(L.sim.z.shape[0]), "weeks": L.sim.weeks,
+            "league_accept_rate": {"proposals": sum(a.get("proposed", 0) for a in L.activity.values()),
+                                   "completed": len(L.history)}}
+
+
+@app.get("/api/league/history")
+def league_history(engine: str | None = None):
+    c = ctx(engine or _best_engine())
+    return {"trades": league_ctx(c).trade_history()}
+
+
 @app.get("/api/league")
 def league(refresh: bool = False, engine: str = "v1"):
     c = ctx(engine)
@@ -341,24 +410,13 @@ def league_trades(team_id: str | None = None, engine: str = "v1"):
     team_id = team_id or c.settings["espn"].get("my_team_id")
     if not team_id:
         raise HTTPException(400, "Pick your team on the League page first.")
-    lg = _league(c)
-    rosters = _rosters(lg)
-    if team_id not in rosters:
+    L = league_ctx(c)
+    if team_id not in L.rosters:
         raise HTTPException(404, f"Team {team_id} not in league.")
-    others = {k: v for k, v in rosters.items() if k != team_id}
-    found = advisor.find_trades(rosters[team_id], others, c.values, c.signals, c.evaluator)
-    names = {t["team_id"]: t["name"] for t in lg["teams"]}
-
-    def info(pid):
-        r = c.values.loc[pid] if pid in c.values.index else None
-        return {"id": pid, "name": r["name"] if r is not None else pid,
-                "position": r["position"] if r is not None else None,
-                "team": r["team"] if r is not None else None,
-                "value": float(r["value"]) if r is not None else 0.0,
-                "call": c.signals.at[pid, "call"] if pid in c.signals.index else None}
-
+    found = finder.find(L, team_id, c.evaluator)
     for f in found:
-        f["team_name"] = names.get(f["team_id"])
-        f["give"] = [info(p) for p in f["give"]]
-        f["get"] = [info(p) for p in f["get"]]
-    return {"team_id": team_id, "trades": found}
+        f["give"] = [_player_info(c, p) for p in f["give"]]
+        f["get"] = [_player_info(c, p) for p in f["get"]]
+    me = L.odds[team_id]
+    return {"team_id": team_id, "trades": found,
+            "my_odds": {"playoff": me["playoff"], "title": me["title"], "situation": situation(me["playoff"])}}

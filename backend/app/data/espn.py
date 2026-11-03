@@ -55,7 +55,7 @@ def fetch_league(league_id: str | None = None, season: int | None = None,
     if config.ESPN_S2 and config.ESPN_SWID:
         cookies = {"espn_s2": config.ESPN_S2, "SWID": config.ESPN_SWID}
     url = BASE.format(season=season, league_id=league_id)
-    params = [("view", v) for v in ("mTeam", "mRoster", "mSettings")]
+    params = [("view", v) for v in ("mTeam", "mRoster", "mSettings", "mMatchupScore")]
     try:
         return cached_json(url, f"espn_league_{league_id}_{season}.json", ttl_hours=0.25,
                            force=force, params=params, cookies=cookies or None)
@@ -69,6 +69,79 @@ def fetch_league(league_id: str | None = None, season: int | None = None,
         raise ESPNError(f"ESPN returned HTTP {code}.") from e
     except httpx.HTTPError as e:
         raise ESPNError(f"Could not reach ESPN: {e.__class__.__name__}") from e
+
+
+def _cookies() -> dict | None:
+    if config.ESPN_S2 and config.ESPN_SWID:
+        return {"espn_s2": config.ESPN_S2, "SWID": config.ESPN_SWID}
+    return None
+
+
+def fetch_transactions(league_id: str, season: int, through_period: int) -> list[dict]:
+    """Every trade-related transaction (proposals, accepts, declines, vetoes) this season."""
+    url = BASE.format(season=season, league_id=league_id)
+    out = []
+    for p in range(1, through_period + 1):
+        try:
+            # Past periods don't change; the current one refreshes hourly.
+            ttl = 1.0 if p >= through_period - 1 else 24 * 7
+            data = cached_json(url, f"espn_tx_{league_id}_{season}_p{p}.json", ttl_hours=ttl,
+                               params=[("view", "mTransactions2"), ("scoringPeriodId", p)], cookies=_cookies())
+        except httpx.HTTPError:
+            continue
+        out += [t for t in data.get("transactions", []) if "TRADE" in (t.get("type") or "")]
+    return out
+
+
+def fetch_player_projections(league_id: str, season: int, scoring_period: int, force: bool = False) -> list[dict]:
+    """ESPN's own projections for every relevant player, in this league's scoring.
+
+    This is what leaguemates see in the ESPN app, so it's the best guess of how
+    they value players when judging a trade.
+    """
+    import json as _json
+
+    url = BASE.format(season=season, league_id=league_id)
+    flt = {"players": {"filterStatus": {"value": ["FREEAGENT", "WAIVERS", "ONTEAM"]},
+                       "filterSlotIds": {"value": [0, 2, 4, 6, 17, 23]},
+                       "limit": 600, "sortPercOwned": {"sortPriority": 1, "sortAsc": False}}}
+    data = cached_json(url, f"espn_players_{league_id}_{season}_p{scoring_period}.json", ttl_hours=3, force=force,
+                       params=[("view", "kona_player_info"), ("scoringPeriodId", scoring_period)],
+                       cookies=_cookies(), headers={"X-Fantasy-Filter": _json.dumps(flt)})
+    out = []
+    for e in data.get("players", []):
+        p = e.get("player") or {}
+        rec = {"espn_id": str(p.get("id")), "name": p.get("fullName"),
+               "position": POSITION.get(p.get("defaultPositionId")), "on_team_id": e.get("onTeamId") or 0,
+               "status": e.get("status"), "pct_owned": (p.get("ownership") or {}).get("percentOwned"),
+               "espn_ros": None, "espn_ros_avg": None, "espn_week": None, "espn_actual": None}
+        for s in p.get("stats") or []:
+            if s.get("seasonId") != season:
+                continue
+            src, split = s.get("statSourceId"), s.get("statSplitTypeId")
+            if src == 1 and split == 0:     # rest-of-season projection
+                rec["espn_ros"], rec["espn_ros_avg"] = s.get("appliedTotal"), s.get("appliedAverage")
+            elif src == 1 and split == 1 and s.get("scoringPeriodId") == scoring_period:
+                rec["espn_week"] = s.get("appliedTotal")
+            elif src == 0 and split == 0:   # actual points so far
+                rec["espn_actual"] = s.get("appliedTotal")
+        r = (e.get("ratings") or {}).get("0") or {}
+        rec["espn_pos_rank"] = r.get("positionalRanking")
+        out.append(rec)
+    return out
+
+
+def parse_schedule(raw: dict) -> list[dict]:
+    games = []
+    for m in raw.get("schedule", []):
+        home, away = m.get("home") or {}, m.get("away") or {}
+        games.append({
+            "period": m.get("matchupPeriodId"), "home": str(home.get("teamId")) if home else None,
+            "away": str(away.get("teamId")) if away.get("teamId") is not None else None,
+            "home_pts": home.get("totalPoints"), "away_pts": away.get("totalPoints"),
+            "winner": m.get("winner"), "playoff": m.get("playoffTierType") not in (None, "NONE"),
+        })
+    return games
 
 
 def parse_league(raw: dict, espn_to_id: dict[str, str]) -> dict:
@@ -98,12 +171,19 @@ def parse_league(raw: dict, espn_to_id: dict[str, str]) -> dict:
             "points_for": rec.get("pointsFor"), "roster": roster,
         })
     settings = raw.get("settings") or {}
+    sched = settings.get("scheduleSettings") or {}
     return {
         "league_id": str(raw.get("id")), "season": raw.get("seasonId"),
         "name": settings.get("name"), "size": settings.get("size") or len(teams),
         "scoring_period": raw.get("scoringPeriodId"),
+        "current_period": (raw.get("status") or {}).get("currentMatchupPeriod") or raw.get("scoringPeriodId"),
         "teams": teams,
         "settings": convert_settings(settings),
+        "playoffs": {"regular_season_weeks": sched.get("matchupPeriodCount") or 14,
+                     "teams": sched.get("playoffTeamCount") or 6,
+                     "round_length": sched.get("playoffMatchupPeriodLength") or 1,
+                     "seeding_tiebreak": sched.get("playoffSeedingRule")},
+        "schedule": parse_schedule(raw),
     }
 
 
