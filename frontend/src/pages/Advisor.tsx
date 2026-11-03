@@ -68,7 +68,7 @@ export default function Advisor() {
           <h1>{isModel ? "Trade advisor, model edition" : "Trade advisor"}</h1>
           <p>
             Trade partners judge players by recent points. These calls compare that against what{" "}
-            {isModel ? "the trained model" : "usage, efficiency and the remaining schedule"} project from here.
+            {isModel ? "the trained model projects" : "usage, efficiency and the remaining schedule project"} from here.
           </p>
         </div>
       </div>

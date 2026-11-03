@@ -80,6 +80,8 @@ class LeagueContext:
             tx = []
         accepted = {t.get("relatedTransactionId") for t in tx if t.get("type") in ("TRADE_ACCEPT", "TRADE_UPHOLD")}
         vetoed = {t.get("relatedTransactionId") for t in tx if t.get("type") == "TRADE_VETO"}
+        declined = {t.get("relatedTransactionId") for t in tx if t.get("type") == "TRADE_DECLINE"}
+        self.proposals = []
         act = defaultdict(lambda: {"proposed": 0, "received": 0, "declined": 0, "completed": 0})
         self.history = []
         seen = set()
@@ -95,6 +97,14 @@ class LeagueContext:
             for other in teams - {proposer}:
                 act[other]["received"] += 1
             done = (t.get("status") == "EXECUTED" or t.get("id") in accepted) and t.get("id") not in vetoed
+            moving = defaultdict(list)
+            for i in items:
+                moving[str(i.get("toTeamId"))].append(espn_to_id.get(str(i.get("playerId")), str(i.get("playerId"))))
+            status = ("Accepted" if done else "Vetoed" if t.get("id") in vetoed
+                      else "Declined" if t.get("id") in declined
+                      else {"PENDING": "Pending", "CANCELED": "Canceled"}.get(t.get("status"), str(t.get("status")).title()))
+            self.proposals.append({"id": t.get("id"), "period": t.get("scoringPeriodId"), "proposer": proposer,
+                                   "status": status, "receives": dict(moving)})
             if done:
                 for tm in teams:
                     act[tm]["completed"] += 1
@@ -126,6 +136,22 @@ class LeagueContext:
                 s["pts_since"] = round(sum(p["pts_since"] for p in s["received"]), 1)
                 s["ros_value"] = round(sum(p["ros_value"] for p in s["received"]), 1)
             out.append({"period": h["period"], "sides": sides})
+        return sorted(out, key=lambda x: -(x["period"] or 0))
+
+    def offers(self) -> list[dict]:
+        """Every trade proposal this season, newest first, with players and status."""
+        out = []
+        for p in self.proposals:
+            sides, drops = [], []
+            for team, ids in p["receives"].items():
+                players = [{"id": i, "name": self._name(i)} for i in ids]
+                if team not in self.teams:  # ESPN sends dropped players to team 0 (waivers)
+                    drops += players
+                    continue
+                sides.append({"team_id": team, "team_name": self.teams[team]["name"], "receives": players})
+            out.append({"period": p["period"], "status": p["status"], "proposer": p["proposer"],
+                        "proposer_name": self.teams.get(p["proposer"], {}).get("name", p["proposer"]),
+                        "sides": sides, "drops": drops})
         return sorted(out, key=lambda x: -(x["period"] or 0))
 
     def _name(self, pid: str) -> str:

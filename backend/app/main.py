@@ -460,7 +460,8 @@ def league_offer(body: OfferIn, engine: str = "v1", team_id: str | None = None):
 @app.get("/api/league/history")
 def league_history(engine: str | None = None):
     c = ctx(engine or _best_engine())
-    return {"trades": league_ctx(c).trade_history()}
+    L = league_ctx(c)
+    return {"trades": L.trade_history(), "offers": L.offers()}
 
 
 @app.get("/api/league")

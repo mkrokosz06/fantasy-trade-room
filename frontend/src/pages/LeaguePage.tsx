@@ -10,13 +10,72 @@ interface HistoryTrade {
     received: { id: string; name: string; pts_since: number; ros_value: number }[] }[];
 }
 
+interface OfferRow {
+  period: number;
+  status: string;
+  proposer: string;
+  proposer_name: string;
+  sides: { team_id: string; team_name: string; receives: { id: string; name: string }[] }[];
+  drops: { id: string; name: string }[];
+}
+
+function Offers({ offers, me }: { offers: OfferRow[]; me: string | null }) {
+  if (!offers.length) return null;
+  const statusCls = (s: string) => (s === "Accepted" ? "buy" : s === "Pending" ? "hold" : "sell");
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <h3>Trade offers this season</h3>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Wk</th><th>From</th><th>Deal</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody>
+            {offers.map((o, i) => {
+              const other = o.sides.find((s) => s.team_id !== o.proposer);
+              const mine = o.sides.find((s) => s.team_id === o.proposer);
+              const give = other?.receives.map((p) => p.id) ?? [];
+              const get = mine?.receives.map((p) => p.id) ?? [];
+              const involvesMe = me !== null && o.sides.some((s) => s.team_id === me);
+              return (
+                <tr key={i} style={involvesMe ? { background: "var(--buy-bg)" } : undefined}>
+                  <td>{o.period}</td>
+                  <td><b>{o.proposer_name}</b>{involvesMe && <span className="badge hold" style={{ marginLeft: 6 }}>Involves you</span>}</td>
+                  <td style={{ whiteSpace: "normal" }}>
+                    {o.sides.map((s) => (
+                      <div key={s.team_id} className="small">
+                        <b>{s.team_name}</b> gets {s.receives.map((p) => p.name).join(", ")}
+                      </div>
+                    ))}
+                    {o.drops.length > 0 && (
+                      <div className="small muted">Dropped to make room: {o.drops.map((p) => p.name).join(", ")}</div>
+                    )}
+                  </td>
+                  <td><span className={`badge ${statusCls(o.status)}`}>{o.status}</span></td>
+                  <td>
+                    {give.length > 0 && get.length > 0 && other && (
+                      <Link className="btn ghost small" to={`/?a=${give.join(",")}&b=${get.join(",")}&ta=${o.proposer}&tb=${other.team_id}`}>
+                        Open in calculator
+                      </Link>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function Meter({ p }: { p: number }) {
   return <span className="meter" aria-hidden="true"><i style={{ width: `${Math.round(p * 100)}%` }} /></span>;
 }
 
 function Standings({ lg }: { lg: League }) {
   const o = useApi<LeagueOdds>("/api/league/odds");
-  const h = useApi<{ trades: HistoryTrade[] }>("/api/league/history");
+  const h = useApi<{ trades: HistoryTrade[]; offers: OfferRow[] }>("/api/league/history");
   const lineup = new Map(lg.teams.map((t) => [t.team_id, t.lineup_ros_pts]));
   if (o.error) return <ErrorBox error={o.error} />;
   if (!o.data) return <Loading what="Simulating the rest of the season" />;
@@ -75,6 +134,7 @@ function Standings({ lg }: { lg: League }) {
           {r.proposals} trade offers this season, {r.completed} accepted.
           {r.completed === 0 && " Offers in this league are rarely accepted, so the advisor's acceptance estimates are scaled down to match."}
         </p>
+        {h.data && <Offers offers={h.data.offers ?? []} me={lg.my_team_id} />}
         {h.data?.trades.map((t, i) => (
           <div key={i} className="odds-card">
             <b>Week {t.period}</b>
