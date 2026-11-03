@@ -7,12 +7,12 @@ projects every player for each remaining week, and connects to your ESPN league.
 
 | Page | What you get |
 | --- | --- |
-| **Trade calculator** | Add players to each side and see who wins, drawn on a football field. Pick ESPN teams to also see how each team's projected starting lineup changes. Suggests players that would even out an uneven trade. |
-| **Trade advisor** | Buy low / sell high / hold calls for every fantasy-relevant player, each with reasons. Includes touchdown luck, points vs expected points, usage trend, remaining schedule and injuries. With your ESPN team selected, it also searches every roster for trades that improve your lineup. |
-| **Rankings** | Rest-of-season values, or projections for any upcoming week, with matchup, Vegas and injury adjustments. |
+| **Trade calculator** | Add players (including team defenses) to each side and see who wins, drawn on a football field. Open any player's game log right in the calculator. With ESPN connected, it detects whose players they are and shows each team's **playoff, bye and title odds before and after**, any player a team would have to drop, and **whether the other manager is likely to accept**. Suggests players that would even out an uneven trade. |
+| **Trade advisor** | Buy low / sell high / hold calls for every fantasy-relevant player, each with reasons: touchdown luck, points vs expected points, usage trend, remaining and fantasy-playoff schedule, injuries, and ESPN's projection (what your leaguemates see). With your ESPN team selected, it also sets your **next lineup** to maximize your chance of beating your opponent, finds **trades** ranked by how much they raise your playoff/title odds and how appealing they look to the other manager, and finds **waiver pickups**. A **track record** grades past calls; tested on 2024–25, sell-high calls were right 80% of the time and buy-low 56% (vs a 39% base rate). |
+| **Rankings** | Rest-of-season values, or projections for any upcoming week, with matchup, Vegas and injury adjustments, plus fantasy-playoff (weeks 15–17) schedule strength. |
 | **Player stats** | Season tables scored with your settings, including expected fantasy points (xFP), expected TDs, target share and WOPR. Click any player for charts, game logs and a breakdown of how the projection was built. |
 | **Matchups** | Fantasy points each defense allows to each position. |
-| **ESPN league** | Rosters, standings by projected lineup strength, and a one-click import of your league's scoring and lineup slots. |
+| **ESPN league** | Standings with **playoff, bye and title odds** from 5,000 simulated seasons, each team's situation (contender / bubble / long shot), trade activity and trade history, rosters, and a one-click import of your league's scoring (including D/ST rules) and lineup slots. |
 | **Settings** | Scoring presets (PPR is the default; Half-PPR, Standard, 6-pt pass TD and TE premium are also available), league size and lineup slots (1QB, 3WR, Superflex, 2QB), and projection controls. |
 
 ### Model lab
@@ -85,6 +85,28 @@ Doubtful players almost never play.
 To re-run the experiments, click **Re-run experiments** in Model lab (about 70 minutes), or run
 `..\.venv\Scripts\python -m app.ml.experiments` from `backend/`.
 
+## League-aware trading (`backend/app/league/`)
+
+**Season simulator.** Plays the rest of the season 5,000 times: each team's best lineup every week (players'
+projections plus their week-to-week spread), the real remaining ESPN schedule (the week in progress starts from
+points already scored), standings by wins then points, then the playoff bracket. Trades are compared using the
+*same* random draws before and after, so differences come from the trade, not from noise. If a team receives more
+players than it sends, it drops its least valuable non-IR player.
+
+**Will they accept?** There aren't enough trades in one league to train a model, so this is a transparent estimate
+built from what drives acceptance:
+- how the deal looks in **ESPN's own projections**, which is what leaguemates check;
+- whether it actually improves their playoff and title odds;
+- their situation: contender, bubble team (motivated) or long shot (often checked out);
+- how often they trade;
+- scaled by how often offers are accepted in your league.
+
+**Trade finder.** Screens every 1-for-1, 2-for-1 and 1-for-2 deal, simulates the best ~120 for both teams, and
+ranks by your playoff/title gain weighted by how appealing the offer is to the other manager.
+
+**Team defenses.** Projected from Sleeper's weekly D/ST projections and scored with your league's D/ST rules. Point
+and yard-allowed tiers are scored as expected values. Game logs use actual results from nflverse team stats.
+
 ## Running it
 
 Requirements: Python 3.12+ and Node 20+.
@@ -154,9 +176,11 @@ usage trend argues against the call.
 
 ```
 backend/app/
-  data/        sources.py (nflverse, Sleeper, ID crosswalk), espn.py, store.py (joins it all), cache.py
-  scoring.py   canonical stats, source mappings, scoring presets
-  projections.py, values.py, trade.py, advisor.py, stats.py
+  data/        sources.py (nflverse, Sleeper, ffopportunity, ID crosswalk), espn.py, store.py, cache.py
+  league/      sim.py (season simulator), context.py (odds, acceptance, waivers, lineup), finder.py
+  ml/          dataset.py (pre-game features), model.py (train/backtest/predict), experiments.py, service.py
+  scoring.py   canonical stats, scoring presets, D/ST scoring
+  projections.py, values.py, trade.py, advisor.py, stats.py, tracking.py (advisor track record)
   main.py      FastAPI endpoints under /api
 backend/tests/ unit tests
 frontend/src/  React + TypeScript (Vite); pages/ holds one file per page
@@ -164,7 +188,7 @@ frontend/src/  React + TypeScript (Vite); pages/ holds one file per page
 
 ## Roadmap
 
-- Model: depth-chart and coaching-change features, per-week weather forecasts, hyperparameter tuning
-- D/ST and yardage-bonus scoring
-- Snap counts and red-zone usage in the model
+- Learn trade acceptance from real accepted/declined offers once enough exist across seasons
+- Weekly weather forecasts for the upcoming game (historical weather didn't help the model)
+- Yardage bonuses and other rare scoring rules
 - Yahoo league support

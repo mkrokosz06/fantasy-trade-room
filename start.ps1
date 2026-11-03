@@ -12,7 +12,7 @@ if (-not (Test-Path "$root\frontend\node_modules")) {
     Push-Location "$root\frontend"; npm install; Pop-Location
 }
 
-Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$root\backend'; ..\.venv\Scripts\python -m uvicorn app.main:app --port 8000 --reload"
+Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$root\backend'; ..\.venv\Scripts\python -m uvicorn app.main:app --port 8000"
 Start-Process pwsh -ArgumentList "-NoExit", "-Command", "cd '$root\frontend'; npx vite --port 5173"
 Start-Sleep -Seconds 4
 Start-Process "http://localhost:5173"
